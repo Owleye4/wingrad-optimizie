@@ -60,78 +60,52 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   const int sizeF = 3 * 3;
   const int sizeO = outHeight * outWidth;
   const long P = outHeight / 2 * outWidth / 2 * N;
+  int outgap[3] = {
+      K * (inHeight - 2) * (inWidth - 2), 
+      (inHeight - 2) * (inWidth - 2), 
+      (inWidth - 2)
+    };
+  memset(out, 0, N * outgap[0]);
 
-  float tmp_u[12];  // 4 * 3
-  float u[16];      // 4 * 4;
   // U[:, :, k, c] = G * filters[k, c, :, :] * G.T()
-#pragma omp parallel for private(tmp_u, u)
+  #pragma omp parallel for// private(tmp_u, u)
   for (int k = 0; k < K; ++k) {
     for (int c = 0; c < C; ++c) {
+      float tmp_u[12];  // 4 * 3
+      float u[16];      // 4 * 4;
       float *filters_ptr = filter + (k * C + c) * sizeF;
       sgemm(&G[0][0], filters_ptr, tmp_u, 4, 3, 3);
       sgemm(tmp_u, &G_T[0][0], u, 4, 3, 4);
-      for (int xi = 0; xi < 4; ++xi)
-        for (int nu = 0; nu < 4; ++nu)
-          U[((xi * 4 + nu) * K + k) * C + c] = u[xi * 4 + nu];
-    }
-  }
-  // V[:, :, c, p] = B_T * image[c, b, :, :] * B
-  float tmp_v[16];
-  float d[16];  // d: [4 * 4];
-  float v[16];  // v: [4 * 4];
-#pragma omp parallel for collapse(2) private(tmp_v, d, v)
-  for (int n = 0; n < N; ++n)
-    for (int c = 0; c < C; ++c) {
-      for (int y = 0; y < outHeight / 2; ++y) {
-        for (int x = 0; x < outWidth / 2; ++x) {
-
-          // Generate d_cb
-          for (int iy = 0; iy < 4; ++iy)
-            for (int ix = 0; ix < 4; ++ix)
-              d[iy * 4 + ix] = image[(n * C + c) * sizeI +
-                                     (y * 2 + iy) * inWidth + (x * 2 + ix)];
-          sgemm(&B_T[0][0], d, tmp_v, 4, 4, 4);
-          sgemm(tmp_v, &B[0][0], v, 4, 4, 4);
-          int b = ((n * outHeight / 2) + y) * outWidth / 2 + x;
-          for (int xi = 0; xi < 4; ++xi)
-            for (int nu = 0; nu < 4; ++nu)
-              V[((long)(xi * 4 + nu) * C + c) * P + b] = v[xi * 4 + nu];
-        }
-      }
-    }
-
-  // M[xi, nu, :, :] = U[xi, nu, :, :] * V[xi, nu, :, :]
-  for (int xi = 0; xi < 4; ++xi) {
-    for (int nu = 0; nu < 4; ++nu) {
-      float *M_ptr = M + (long)(xi * 4 + nu) * K * P;
-      float *U_ptr = U + (long)(xi * 4 + nu) * K * C;
-      float *V_ptr = V + (long)(xi * 4 + nu) * C * P;
-      sgemm_parallel(U_ptr, V_ptr, M_ptr, K, C, P);
-    }
-  }
-
-  // Y = A_T * m * A
-  float mm[16];       // 4 * 4
-  float tmp_m[8];     // 2 * 4
-  float temp_out[4];  // 2 * 2
-// #pragma omp parallel for collapse(2) private(mm, temp_out, tmp_m)
-  for (int n = 0; n < N; ++n)
-    for (int k = 0; k < K; ++k) {
-      for (int y = 0; y < outHeight / 2; ++y) {
-        for (int x = 0; x < outWidth / 2; ++x) {
-          int b = (n * outHeight / 2 + y) * outWidth / 2 + x;
-          for (long xi = 0; xi < 4; ++xi) {
-            for (long nu = 0; nu < 4; ++nu) {
-              mm[xi * 4 + nu] = M[((xi * 4 + nu) * K + k) * P + b];
-            }
+      #pragma omp parallel for collapse(2)// private(tmp_v, d, v)
+      for (int n = 0; n < N; ++n) {
+        for (int y = 0; y < outHeight / 2; ++y) {
+          for (int x = 0; x < outWidth / 2; ++x) {
+            float tmp_v[16];
+            float M[16];
+            float d[16];  // d: [4 * 4];
+            float v[16];  // v: [4 * 4];
+            // Generate d_cb
+            for (int iy = 0; iy < 4; ++iy) 
+              for (int ix = 0; ix < 4; ++ix) 
+                d[iy * 4 + ix] = image[(n * C + c) * sizeI +
+                                      (y * 2 + iy) * inWidth + (x * 2 + ix)];
+            sgemm(&B_T[0][0], d, tmp_v, 4, 4, 4);
+            sgemm(tmp_v, &B[0][0], v, 4, 4, 4);
+            int b = ((n * outHeight / 2) + y) * outWidth / 2 + x;
+            for(int i = 0; i < 16; ++i) 
+              M[i] = u[i] * v[i];
+            float A_TxM[8]; //size{A_TxM} = (2,4)
+            float Tile[4];  //size{Tile} = (2,2)
+            sgemm(&A_T[0][0], &M[0], &A_TxM[0], 2, 4, 4);
+            sgemm(&A_TxM[0], &A[0][0], &Tile[0], 2, 4, 2);
+            for(int outh=0; outh < 2; ++outh)
+              for(int outw=0; outw < 2; ++outw) {
+                int outpos = n * outgap[0] + k * outgap[1] + outh * outgap[2] + outw; 
+                out[outpos] += Tile[outh * 2 + outw];
+              }
           }
-          sgemm(&A_T[0][0], mm, tmp_m, 2, 4, 4);
-          sgemm(tmp_m, &A[0][0], temp_out, 2, 4, 2);
-          for (int i = 0; i < 2; ++i)
-            for (int j = 0; j < 2; ++j)
-              out[(long)((n * K + k) * outHeight + y * 2 + i) * outWidth + x * 2 +
-                  j] = temp_out[i * 2 + j];
         }
       }
     }
-}
+  }
+}  
