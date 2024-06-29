@@ -36,13 +36,12 @@ void sgemm_parallel(const float *A, const float *B, float *out, const int M, con
   for (int i = 0; i < M * N; ++i) {
     out[i] = 0.0f;
   }
-
-for (int k = 0; k < K; ++k)
-#pragma omp parallel for collapse(2)
-  for (int i = 0; i < M; ++i)
-    for (int j = 0; j < N; ++j) {
-          out[(long)i * N + j]  += A[i * K + k] * B[k * N + j];
-    }
+  for (int k = 0; k < K; ++k)
+  #pragma omp parallel for collapse(2)
+    for (int i = 0; i < M; ++i)
+      for (int j = 0; j < N; ++j) {
+            out[(long)i * N + j]  += A[i * K + k] * B[k * N + j];
+      }
 }
 // User API for winograd F(2,3)
 // image: [batch * C * inHeight * inWidth]
@@ -68,7 +67,7 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   memset(out, 0, N * outgap[0]);
 
   // U[:, :, k, c] = G * filters[k, c, :, :] * G.T()
-  #pragma omp parallel for// private(tmp_u, u)
+  // #pragma omp parallel for// private(tmp_u, u)
   for (int k = 0; k < K; ++k) {
     for (int c = 0; c < C; ++c) {
       float tmp_u[12];  // 4 * 3
@@ -76,7 +75,7 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
       float *filters_ptr = filter + (k * C + c) * sizeF;
       sgemm(&G[0][0], filters_ptr, tmp_u, 4, 3, 3);
       sgemm(tmp_u, &G_T[0][0], u, 4, 3, 4);
-      #pragma omp parallel for collapse(2)// private(tmp_v, d, v)
+      // #pragma omp parallel for collapse(2)// private(tmp_v, d, v)
       for (int n = 0; n < N; ++n) {
         for (int y = 0; y < outHeight / 2; ++y) {
           for (int x = 0; x < outWidth / 2; ++x) {
@@ -100,7 +99,8 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
             sgemm(&A_TxM[0], &A[0][0], &Tile[0], 2, 4, 2);
             for(int outh=0; outh < 2; ++outh)
               for(int outw=0; outw < 2; ++outw) {
-                int outpos = n * outgap[0] + k * outgap[1] + outh * outgap[2] + outw; 
+                int outpos = n * outgap[0] + k * outgap[1] + (y*2 + outh) * outgap[2] + (x*2 + outw); 
+                // printf("\n outpos = %d", outpos);
                 out[outpos] += Tile[outh * 2 + outw];
               }
           }
