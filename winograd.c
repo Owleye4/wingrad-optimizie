@@ -123,7 +123,7 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
     };
   memset(out, 0, N * outgap[0] * sizeof(float));
 
-  float* u_arr = (float*) malloc(K * C * sizeof(float*) * 36);
+  float* u_arr = (float*) malloc(K * C * sizeof(float) * 36);
   assert(u_arr != NULL);
   #pragma omp parallel for
   for (int k = 0; k < K; ++k){
