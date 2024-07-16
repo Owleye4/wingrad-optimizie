@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <arm_sve.h>
+#include "common.h"
 
 const float G[6][3] = {
     {1.0 / 4,      0.0,       0.0},
@@ -101,6 +103,115 @@ void sgemm_4x6x4(const float *A, const float *B, float *out, const int M, const 
         out[i * 4 + j] += A[i * 6 + k] * B[k * 4 + j];
 }
 
+void filter_KCHW_to_KHWC(float* __restrict__ filter, int K, 
+                                    int C, int filer_H, int filer_W, 
+                                    float* __restrict__ filer_KHWC) {
+  PRAGMA_OMP_PARALLEL_FOR()
+  for(int k = 0; k < K; ++k)
+    for(int c = 0; c < C; ++c)
+      for(int h = 0; h < filer_H; ++h)
+        for(int w = 0; w < filer_W; ++w) {
+          // 多线程集中读分散写，避免伪共享
+          filer_KHWC[k * filer_H * filer_W * C + h * filer_W * C + w * C + c] 
+                    = filter[k * C * filer_H * filer_W + c * filer_H * filer_W + h * filer_W + w];
+        }
+}
+
+
+void filter_transform(float* __restrict__ filer_KHWC, int K, int filer_H, int filer_W, int C, float* __restrict__ u_arr) {
+  // filer_KHWC[K][3][3][C]
+  // u_arr[K][6][6][C]
+  float* tmp_u = malloc(sizeof(float) * K * 6 * 3 * C); 
+  PRAGMA_OMP_PARALLEL_FOR()
+  for (int k = 0; k < K; ++k) {
+    float* filter_ptr = filer_KHWC + k * 3 * 3 * C;
+    float* u_arr_ptr = u_arr + k * 6 * 6 * C;
+    float* tmp_u_ptr = k * 6 * 3 * C;
+    DECLARE_SVE_FP32_REGS();
+    z25 = svdup_f32(1.0f);
+    z26 = svdup_f32(- 1.0f / 6.0f );
+    z27 = svdup_f32(- 1.0f / 12.0f);
+    z28 = svdup_f32(  1.0f / 4.0f );
+    z29 = svdup_f32(  1.0f / 6.0f );
+    z30 = svdup_f32( 1.0f / 12.0f );
+    z31 = svdup_f32( 1.0f / 24.0f );
+    for(int c = 0; c < C; c += FP32_PER_REG) {
+      svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C-c));
+      // G * filter
+      for (int i = 0; i < FLT_W; ++i) {     // 遍历列
+        z6 = svld1(pg, filter_ptr + i * 3 * C + 0 * C + c);
+        
+        z0 = svmul_f32_x(pg, z28, z6);
+        z1 = svmul_f32_x(pg, z26, z6);
+        z2 = svmul_f32_x(pg, z26, z6);
+        z3 = svmul_f32_x(pg, z31, z6);
+        z4 = svmul_f32_x(pg, z31, z6);
+
+        z6 = svld1(pg, filter_ptr + i * 3 * C + 1 * C + c);
+        
+        // z0 += 0;
+        z1 = svmla_f32_x(pg, z1, z26, z6);
+        z2 = svmla_f32_x(pg, z2, z29, z6);
+        z3 = svmla_f32_x(pg, z3, z30, z6);
+        z4 = svmla_f32_x(pg, z4, z27, z6);
+        // z5 += 0;
+        z6 = svld1(pg, filter_ptr + i * 3 * C + 2 * C + c);
+        
+        // z0 += 0;
+        z1 = svmla_f32_x(pg, z1, z26, z6);
+        z2 = svmla_f32_x(pg, z2, z26, z6);
+        z3 = svmla_f32_x(pg, z3, z29, z6);
+        z4 = svmla_f32_x(pg, z4, z29, z6);
+        z5 = z6;
+
+        svst1_f32(pg, tmp_u_ptr +  0 * 3 * C + i * C + c, z0);
+        svst1_f32(pg, tmp_u_ptr +  1 * 3 * C + i * C + c, z1);
+        svst1_f32(pg, tmp_u_ptr +  2 * 3 * C + i * C + c, z2);
+        svst1_f32(pg, tmp_u_ptr +  3 * 3 * C + i * C + c, z3);
+        svst1_f32(pg, tmp_u_ptr +  4 * 3 * C + i * C + c, z4);
+        svst1_f32(pg, tmp_u_ptr +  5 * 3 * C + i * C + c, z5);
+      }
+      // filter * G_T
+      for (int i = 0; i < TILE_OUT_W; ++i) {
+        z6 = svld1(pg, tmp_u_ptr + i * 3 * C + 0 * C + c);
+        
+        z0 = svmul_f32_x(pg, z28, z6);
+        z1 = svmul_f32_x(pg, z26, z6);
+        z2 = svmul_f32_x(pg, z26, z6);
+        z3 = svmul_f32_x(pg, z31, z6);
+        z4 = svmul_f32_x(pg, z31, z6);
+
+        z6 = svld1(pg, tmp_u_ptr + i * 3 * C + 1 * C + c);
+        
+        // z0 += 0;
+        z1 = svmla_f32_x(pg, z1, z26, z6);
+        z2 = svmla_f32_x(pg, z2, z29, z6);
+        z3 = svmla_f32_x(pg, z3, z30, z6);
+        z4 = svmla_f32_x(pg, z4, z27, z6);
+        // z5 += 0;
+        z6 = svld1(pg, tmp_u_ptr + i * 3 * C + 2 * C + c);
+        
+        // z0 += 0;
+        z1 = svmla_f32_x(pg, z1, z26, z6);
+        z2 = svmla_f32_x(pg, z2, z26, z6);
+        z3 = svmla_f32_x(pg, z3, z29, z6);
+        z4 = svmla_f32_x(pg, z4, z29, z6);
+        z5 = z6;
+
+        svst1_f32(pg, u_arr_ptr +  0 * 6 * C + i * C + c, z0);
+        svst1_f32(pg, u_arr_ptr +  1 * 6 * C + i * C + c, z1);
+        svst1_f32(pg, u_arr_ptr +  2 * 6 * C + i * C + c, z2);
+        svst1_f32(pg, u_arr_ptr +  3 * 6 * C + i * C + c, z3);
+        svst1_f32(pg, u_arr_ptr +  4 * 6 * C + i * C + c, z4);
+        svst1_f32(pg, u_arr_ptr +  5 * 6 * C + i * C + c, z5);
+      }
+    }
+  }
+  free(tmp_u);
+}
+
+
+
 // User API for winograd F(2,3)
 // image: [batch * C * inHeight * inWidth]
 // filter: [K * C * 3 * 3]
@@ -110,6 +221,7 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
                  const int K, const int N, float *__restrict__ out,
                  float *__restrict__ U, float *__restrict__ V,
                  float *__restrict__ M) {
+
   // m = 2; r = 3; alpha = 4
   const int outHeight = inHeight - 2;
   const int outWidth = inWidth - 2;
@@ -123,18 +235,16 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
     };
   memset(out, 0, N * outgap[0] * sizeof(float));
 
-  float* u_arr = (float*) malloc(K * C * sizeof(float) * 36);
+  float* u_arr = (float*) malloc(sizeof(float) * K * 6 * 6 * C);
   assert(u_arr != NULL);
-  #pragma omp parallel for
-  for (int k = 0; k < K; ++k){
-    for (int c = 0; c < C; ++c){
-      float tmp_u[18]; // 6 * 3 
-      float* filters_ptr = filter + (k * C + c) * sizeF;
-      float* u = u_arr + (k * C + c) * 36;
-      sgemm_6x3x3(&G[0][0], filters_ptr, tmp_u, 6, 3, 3);
-      sgemm_6x3x6(tmp_u, &G_T[0][0], u, 6, 3, 6);
-    }
-  }
+
+  float* filer_KHWC = (float*) malloc(K * C * 3 * 3 * sizeof(float));
+  assert(filer_KHWC != NULL);
+  filter_KCHW_to_KHWC(filter, K, C, 3, 3, filer_KHWC);
+
+  filter_transform(filer_KHWC, K, 3, 3, C, u_arr);
+
+
   // U[:, :, k, c] = G * filters[k, c, :, :] * G.T()
   #pragma omp parallel for collapse(3)// private(tmp_u, u)
   // #pragma omp parallel for collapse(2)// private(tmp_v, d, v)
