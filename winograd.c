@@ -6,105 +6,7 @@
 #include "common.h"
 
 
-const float G[6][3] = {
-    {1.0 / 4,      0.0,       0.0},
-    {-1.0 / 6, -1.0 / 6, -1.0 / 6},
-    {-1.0 / 6,  1.0 / 6, -1.0 / 6},
-    {1.0 / 24,  1.0 / 12, 1.0 / 6},
-    {1.0 / 24, -1.0 / 12, 1.0 / 6},
-    {0.0,            0.0,     1.0}};
-
-const float G_T[3][6] = {
-    {1.0 / 4, -1.0 / 6, -1.0 / 6, 1.0 / 24,  1.0 / 24, 0.0},
-    {    0.0, -1.0 / 6,  1.0 / 6, 1.0 / 12, -1.0 / 12, 0.0},
-    {    0.0, -1.0 / 6, -1.0 / 6,  1.0 / 6,   1.0 / 6, 1.0}};
-
-const float B[6][6] = {
-    { 4.0,  0.0,  0.0,  0.0,  0.0, 0.0},
-    { 0.0, -4.0,  4.0, -2.0,  2.0, 4.0},
-    {-5.0, -4.0, -4.0, -1.0, -1.0, 0.0},
-    { 0.0,  1.0, -1.0,  2.0, -2.0,-5.0},
-    { 1.0,  1.0,  1.0,  1.0,  1.0, 0.0},
-    { 0.0,  0.0,  0.0,  0.0,  0.0, 1.0}};
-
-const float B_T[6][6] = {
-    {4.0,  0.0, -5.0,  0.0,  1.0, 0.0},
-    {0.0, -4.0, -4.0,  1.0,  1.0, 0.0},
-    {0.0,  4.0, -4.0, -1.0,  1.0, 0.0},
-    {0.0, -2.0, -1.0,  2.0,  1.0, 0.0},
-    {0.0,  2.0, -1.0, -2.0,  1.0, 0.0},
-    {0.0,  4.0,  0.0, -5.0,  0.0, 1.0}};
-
-const float A[6][4] = {
-    {1.0,  0.0, 0.0,  0.0},
-    {1.0,  1.0, 1.0,  1.0},
-    {1.0, -1.0, 1.0, -1.0},
-    {1.0,  2.0, 4.0,  8.0},
-    {1.0, -2.0, 4.0, -8.0},
-    {0.0,  0.0, 0.0,  1.0}};
-
-const float A_T[4][6] = {
-    {1.0, 1.0,  1.0, 1.0, 1.0, 0.0},
-    {0.0, 1.0, -1.0, 2.0,-2.0, 0.0},
-    {0.0, 1.0,  1.0, 4.0, 4.0, 0.0},
-    {0.0, 1.0, -1.0, 8.0,-8.0, 1.0}};
-
-void sgemm_6x3x3(const float *A, const float *B, float *out, const int M, const int K, const int N)
-{
-  for (int i = 0; i < 18; ++i){
-    out[i] = 0.0f;
-  }
-  for (int i = 0; i < 6; ++i)
-    for (int j = 0; j < 3; ++j)
-      for (int k = 0; k < 3; ++k)
-        out[i * 3 + j] += A[i * 3 + k] * B[k * 3 + j];
-}
-
-void sgemm_6x3x6(const float *A, const float *B, float *out, const int M, const int K, const int N)
-{
-  for (int i = 0; i < 36; ++i){
-    out[i] = 0.0f;
-  }
-  for (int i = 0; i < 6; ++i)
-    for (int j = 0; j < 6; ++j)
-      for (int k = 0; k < 3; ++k)
-        out[i * 6 + j] += A[i * 3 + k] * B[k * 6 + j];
-}
-
-void sgemm_6x6x6(const float *A, const float *B, float *out, const int M, const int K, const int N)
-{
-  for (int i = 0; i < 36; ++i){
-    out[i] = 0.0f;
-  }
-  for (int i = 0; i < 6; ++i)
-    for (int j = 0; j < 6; ++j)
-      for (int k = 0; k < 6; ++k)
-        out[i * 6 + j] += A[i * 6 + k] * B[k * 6 + j];
-}
-
-void sgemm_4x6x6(const float *A, const float *B, float *out, const int M, const int K, const int N)
-{
-  for (int i = 0; i < 24; ++i){
-    out[i] = 0.0f;
-  }
-  for (int i = 0; i < 4; ++i)
-    for (int j = 0; j < 6; ++j)
-      for (int k = 0; k < 6; ++k)
-        out[i * 6 + j] += A[i * 6 + k] * B[k * 6 + j];
-}
-
-void sgemm_4x6x4(const float *A, const float *B, float *out, const int M, const int K, const int N)
-{
-  for (int i = 0; i < 16; ++i) {
-    out[i] = 0.0f;
-  }
-  for (int i = 0; i < 4; ++i)
-    for (int j = 0; j < 4; ++j)
-      for (int k = 0; k < 6; ++k)
-        out[i * 4 + j] += A[i * 6 + k] * B[k * 4 + j];
-}
-
-void filter_KCHW_to_KHWC(float* __restrict__ filter, int K, int C, float* __restrict__ filer_KHWC) {
+inline void filter_KCHW_to_KHWC(float* __restrict__ filter, int K, int C, float* __restrict__ filer_KHWC) {
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
   for(int k = 0; k < K; ++k)
     for(int h = 0; h < FLT_HW; ++h)
@@ -116,7 +18,7 @@ void filter_KCHW_to_KHWC(float* __restrict__ filter, int K, int C, float* __rest
         }
 }
 
-void u_arr_K66C_to_KC66(float* __restrict__ u_arr, int K, int C, float* __restrict__ u_arr_out) {
+inline void u_arr_K66C_to_KC66(float* __restrict__ u_arr, int K, int C, float* __restrict__ u_arr_out) {
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
   for(int k = 0; k < K; ++k)
     for(int h = 0; h < TILE_IN_HW; ++h)
@@ -128,7 +30,7 @@ void u_arr_K66C_to_KC66(float* __restrict__ u_arr, int K, int C, float* __restri
 }
 
 
-void Image_NCHW_to_NHWC(float* __restrict__ Image, int N, int C, int H, int W, float* __restrict__ Image_NHWC) {
+inline void Image_NCHW_to_NHWC(float* __restrict__ Image, int N, int C, int H, int W, float* __restrict__ Image_NHWC) {
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
   for(int n = 0; n < N; ++n)
     for(int h = 0; h < H; ++h)
@@ -141,7 +43,7 @@ void Image_NCHW_to_NHWC(float* __restrict__ Image, int N, int C, int H, int W, f
 
 
 
-void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __restrict__ u_arr) {
+inline void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __restrict__ u_arr) {
   // filer_KHWC[K][3][3][C]
   // u_arr[K][6][6][C]
   float* tmp_u = malloc(sizeof(float) * K * 6 * 3 * C); 
@@ -276,11 +178,15 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   // u_arr = u_arr_trans;
 
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(3)
-  for (int k = 0; k < K; ++k) {
+  for (int kk = 0; kk < K; kk += FP32_PER_REG) {
     for (int n = 0; n < N; ++n) {
       for (int y = 0; y < outHeight / 4; ++y) {
         for (int x = 0; x < outWidth / 4; ++x) {
           DECLARE_SVE_FP32_REGS();
+          float M[6][6][FP32_PER_REG];
+          memset(M, 0, sizeof M);
+          z22 = svdup_f32( -8.0f );
+          z23 = svdup_f32(  8.0f );
           z24 = svdup_f32(  1.0f );
           z25 = svdup_f32( -1.0f );
           z26 = svdup_f32(  2.0f );
@@ -289,161 +195,217 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
           z29 = svdup_f32( -4.0f );
           z30 = svdup_f32(  5.0f );
           z31 = svdup_f32( -5.0f );
-          for (int c = 0; c < C; c += FP32_PER_REG) {
-            /*
-              // float tmp_v[36];
-              // float M[36];
-              // float d[36];  // d: [6 * 6];
-              // float v[36];  // v: [6 * 6];
-              // float *u = u_arr + (k * C + c) * 36;
-              // // Generate d_cb
-              // for (int iy = 0; iy < 6; ++iy) 
-              //   for (int ix = 0; ix < 6; ++ix) 
-              //     d[iy * 6 + ix] = image[(n * C + c) * sizeI +
-              //                           (y * 4 + iy) * inWidth + (x * 4 + ix)];
-              // sgemm_6x6x6(&B_T[0][0], d, tmp_v, 6, 6, 6);
-              // sgemm_6x6x6(tmp_v, &B[0][0], v, 6, 6, 6);
-              // // int b = ((n * outHeight / 2) + y) * outWidth / 2 + x;
-              // for(int i = 0; i < 36; ++i) 
-              //   M[i] = u[i] * v[i];
-              // float A_TxM[24]; //  A_TxM: [4 * 6];
-              // float Tile[16];  //  Tile: [4 * 4]
-              // sgemm_4x6x6(&A_T[0][0], &M[0], &A_TxM[0], 4, 6, 6);
-              // sgemm_4x6x4(&A_TxM[0], &A[0][0], &Tile[0], 4, 6, 4);
-              // for(int outh=0; outh < 4; ++outh)
-              //   for(int outw=0; outw < 4; ++outw) {
-              //     int outpos = n * outgap[0] + k * outgap[1] + (y * 4 + outh) * outgap[2] + (x * 4 + outw); 
-              //     out[outpos] += Tile[outh * 4 + outw];
-              //   } 
-              // ==============================================================================================
-            */
-            svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C-c));
-            // B_T * d
-            float U[6][6][FP32_PER_REG];
-            float V[6][6][FP32_PER_REG];
-            float M[6][6];
-            for(int yy = 0; yy < TILE_IN_HW; ++yy) 
-              for(int xx = 0; xx < TILE_IN_HW; ++xx){
-                svst1_f32(svptrue_b32(), (float *)&U[yy][xx], svld1(svptrue_b32(), u_arr + k * TILE_IN_HW * TILE_IN_HW * C + yy * TILE_IN_HW * C + xx * C + c));
+          for(int k = kk; k < kk + MIN(FP32_PER_REG, K - kk); ++k) {
+            for (int c = 0; c < C; c += FP32_PER_REG) {
+              svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C-c));
+              // B_T * d
+              float U[6][6][FP32_PER_REG];
+              float V[6][6][FP32_PER_REG];
+              for(int yy = 0; yy < TILE_IN_HW; ++yy) 
+                for(int xx = 0; xx < TILE_IN_HW; ++xx){
+                  svst1_f32(svptrue_b32(), &U[yy][xx][0], svld1(svptrue_b32(), u_arr + k * TILE_IN_HW * TILE_IN_HW * C + yy * TILE_IN_HW * C + xx * C + c));
+                }
+              float tmp[6][6][FP32_PER_REG];
+              for (int xx = 0; xx < TILE_IN_HW; ++xx) {   // 按列产生结果。
+                z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 0) * inWidth * C + (x * 4 + xx) * C + c);
+
+                z0 = svmul_f32_x(pg, z28, z6);
+
+                z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 1) * inWidth * C + (x * 4 + xx) * C + c);
+
+                z1 = svmul_f32_x(pg, z29, z6);
+                z2 = svmul_f32_x(pg, z28, z6);
+                z3 = svmul_f32_x(pg, z27, z6);
+                z4 = svmul_f32_x(pg, z26, z6);
+                z5 = svmul_f32_x(pg, z28, z6);
+
+                z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 2) * inWidth * C + (x * 4 + xx) * C + c);
+
+                z0 = svmla_f32_x(pg, z0, z31, z6);
+                z1 = svmla_f32_x(pg, z1, z29, z6);
+                z2 = svmla_f32_x(pg, z2, z29, z6);
+                z3 = svmla_f32_x(pg, z3, z25, z6);
+                z4 = svmla_f32_x(pg, z4, z25, z6);
+
+                z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 3) * inWidth * C + (x * 4 + xx) * C + c);
+
+                z1 = svmla_f32_x(pg, z1, z24, z6);
+                z2 = svmla_f32_x(pg, z2, z25, z6);
+                z3 = svmla_f32_x(pg, z3, z26, z6);
+                z4 = svmla_f32_x(pg, z4, z27, z6);
+                z5 = svmla_f32_x(pg, z5, z31, z6);
+
+                z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 4) * inWidth * C + (x * 4 + xx) * C + c);
+                
+                z0 = svmla_f32_x(pg, z0, z24, z6);
+                z1 = svmla_f32_x(pg, z1, z24, z6);
+                z2 = svmla_f32_x(pg, z2, z24, z6);
+                z3 = svmla_f32_x(pg, z3, z24, z6);
+                z4 = svmla_f32_x(pg, z4, z24, z6);
+
+                z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 5) * inWidth * C + (x * 4 + xx) * C + c);
+
+                z5 = svmla_f32_x(pg, z5, z24, z6);
+
+                svst1_f32(pg, tmp[0][xx], z0);
+                svst1_f32(pg, tmp[1][xx], z1);
+                svst1_f32(pg, tmp[2][xx], z2);
+                svst1_f32(pg, tmp[3][xx], z3);
+                svst1_f32(pg, tmp[4][xx], z4);
+                svst1_f32(pg, tmp[5][xx], z5);
               }
 
+              for (int yy = 0; yy < TILE_IN_HW; ++yy) {   // 按行产生结果。
+                z6 = svld1(pg, tmp[yy][0]);
 
-            float tmp[6][6][FP32_PER_REG];
-            for (int xx = 0; xx < TILE_IN_HW; ++xx) {   // 按列产生结果。
-              z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 0) * inWidth * C + (x * 4 + xx) * C + c);
+                z0 = svmul_f32_x(pg, z28, z6);
 
-              z0 = svmul_f32_x(pg, z28, z6);
+                z6 = svld1(pg, tmp[yy][1]);
 
-              z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 1) * inWidth * C + (x * 4 + xx) * C + c);
+                z1 = svmul_f32_x(pg, z29, z6);
+                z2 = svmul_f32_x(pg, z28, z6);
+                z3 = svmul_f32_x(pg, z27, z6);
+                z4 = svmul_f32_x(pg, z26, z6);
+                z5 = svmul_f32_x(pg, z28, z6);
 
-              z1 = svmul_f32_x(pg, z29, z6);
-              z2 = svmul_f32_x(pg, z28, z6);
-              z3 = svmul_f32_x(pg, z27, z6);
-              z4 = svmul_f32_x(pg, z26, z6);
-              z5 = svmul_f32_x(pg, z28, z6);
+                z6 = svld1(pg, tmp[yy][2]);
 
-              z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 2) * inWidth * C + (x * 4 + xx) * C + c);
+                z0 = svmla_f32_x(pg, z0, z31, z6);
+                z1 = svmla_f32_x(pg, z1, z29, z6);
+                z2 = svmla_f32_x(pg, z2, z29, z6);
+                z3 = svmla_f32_x(pg, z3, z25, z6);
+                z4 = svmla_f32_x(pg, z4, z25, z6);
 
-              z0 = svmla_f32_x(pg, z0, z31, z6);
-              z1 = svmla_f32_x(pg, z1, z29, z6);
-              z2 = svmla_f32_x(pg, z2, z29, z6);
-              z3 = svmla_f32_x(pg, z3, z25, z6);
-              z4 = svmla_f32_x(pg, z4, z25, z6);
+                z6 = svld1(pg, tmp[yy][3]);
 
-              z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 3) * inWidth * C + (x * 4 + xx) * C + c);
+                z1 = svmla_f32_x(pg, z1, z24, z6);
+                z2 = svmla_f32_x(pg, z2, z25, z6);
+                z3 = svmla_f32_x(pg, z3, z26, z6);
+                z4 = svmla_f32_x(pg, z4, z27, z6);
+                z5 = svmla_f32_x(pg, z5, z31, z6);
 
-              z1 = svmla_f32_x(pg, z1, z24, z6);
-              z2 = svmla_f32_x(pg, z2, z25, z6);
-              z3 = svmla_f32_x(pg, z3, z26, z6);
-              z4 = svmla_f32_x(pg, z4, z27, z6);
-              z5 = svmla_f32_x(pg, z5, z31, z6);
+                z6 = svld1(pg, tmp[yy][4]);
+                
+                z0 = svmla_f32_x(pg, z0, z24, z6);
+                z1 = svmla_f32_x(pg, z1, z24, z6);
+                z2 = svmla_f32_x(pg, z2, z24, z6);
+                z3 = svmla_f32_x(pg, z3, z24, z6);
+                z4 = svmla_f32_x(pg, z4, z24, z6);
 
-              z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 4) * inWidth * C + (x * 4 + xx) * C + c);
-              
-              z0 = svmla_f32_x(pg, z0, z24, z6);
-              z1 = svmla_f32_x(pg, z1, z24, z6);
-              z2 = svmla_f32_x(pg, z2, z24, z6);
-              z3 = svmla_f32_x(pg, z3, z24, z6);
-              z4 = svmla_f32_x(pg, z4, z24, z6);
+                z6 = svld1(pg, tmp[yy][5]);
 
-              z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 5) * inWidth * C + (x * 4 + xx) * C + c);
+                z5 = svmla_f32_x(pg, z5, z24, z6);
 
-              z5 = svmla_f32_x(pg, z5, z24, z6);
-
-              svst1_f32(pg, tmp[0][xx], z0);
-              svst1_f32(pg, tmp[1][xx], z1);
-              svst1_f32(pg, tmp[2][xx], z2);
-              svst1_f32(pg, tmp[3][xx], z3);
-              svst1_f32(pg, tmp[4][xx], z4);
-              svst1_f32(pg, tmp[5][xx], z5);
+                svst1_f32(pg, V[yy][0], z0);
+                svst1_f32(pg, V[yy][1], z1);
+                svst1_f32(pg, V[yy][2], z2);
+                svst1_f32(pg, V[yy][3], z3);
+                svst1_f32(pg, V[yy][4], z4);
+                svst1_f32(pg, V[yy][5], z5);
+              }
+              for(int xx = 0; xx < TILE_IN_HW; ++xx)
+                for(int yy = 0; yy < TILE_IN_HW; ++yy) {
+                  z0 = svld1(pg, &V[yy][xx][0]);
+                  z1 = svld1(pg, &U[yy][xx][0]);
+                  svfloat32_t UV = svmul_f32_x(pg, z0, z1);
+                  M[yy][xx][k - kk] += svaddv_f32(pg, UV); //reduce
+                }
             }
-
-            for (int yy = 0; yy < TILE_IN_HW; ++yy) {   // 按列产生结果。
-              z6 = svld1(pg, tmp[yy][0]);
-
-              z0 = svmul_f32_x(pg, z28, z6);
-
-              z6 = svld1(pg, tmp[yy][1]);
-
-              z1 = svmul_f32_x(pg, z29, z6);
-              z2 = svmul_f32_x(pg, z28, z6);
-              z3 = svmul_f32_x(pg, z27, z6);
-              z4 = svmul_f32_x(pg, z26, z6);
-              z5 = svmul_f32_x(pg, z28, z6);
-
-              z6 = svld1(pg, tmp[yy][2]);
-
-              z0 = svmla_f32_x(pg, z0, z31, z6);
-              z1 = svmla_f32_x(pg, z1, z29, z6);
-              z2 = svmla_f32_x(pg, z2, z29, z6);
-              z3 = svmla_f32_x(pg, z3, z25, z6);
-              z4 = svmla_f32_x(pg, z4, z25, z6);
-
-              z6 = svld1(pg, tmp[yy][3]);
-
-              z1 = svmla_f32_x(pg, z1, z24, z6);
-              z2 = svmla_f32_x(pg, z2, z25, z6);
-              z3 = svmla_f32_x(pg, z3, z26, z6);
-              z4 = svmla_f32_x(pg, z4, z27, z6);
-              z5 = svmla_f32_x(pg, z5, z31, z6);
-
-              z6 = svld1(pg, tmp[yy][4]);
-              
-              z0 = svmla_f32_x(pg, z0, z24, z6);
-              z1 = svmla_f32_x(pg, z1, z24, z6);
-              z2 = svmla_f32_x(pg, z2, z24, z6);
-              z3 = svmla_f32_x(pg, z3, z24, z6);
-              z4 = svmla_f32_x(pg, z4, z24, z6);
-
-              z6 = svld1(pg, tmp[yy][5]);
-
-              z5 = svmla_f32_x(pg, z5, z24, z6);
-
-              svst1_f32(pg, V[yy][0], z0);
-              svst1_f32(pg, V[yy][1], z1);
-              svst1_f32(pg, V[yy][2], z2);
-              svst1_f32(pg, V[yy][3], z3);
-              svst1_f32(pg, V[yy][4], z4);
-              svst1_f32(pg, V[yy][5], z5);
-            }
-            for(int xx = 0; xx < TILE_IN_HW; ++xx)
-              for(int yy = 0; yy < TILE_IN_HW; ++yy) {
-                z0 = svld1(pg, &V[yy][xx][0]);
-                z1 = svld1(pg, &U[yy][xx][0]);
-                svfloat32_t UV = svmul_f32_x(pg, z0, z1);
-                M[yy][xx] = svaddv_f32(pg, UV); //reduce
-              }
-            
-            float Tile[16]; 
-            float A_TxM[24];
-            sgemm_4x6x6(&A_T[0][0], &M[0][0], &A_TxM[0], 4, 6, 6);
-            sgemm_4x6x4(&A_TxM[0], &A[0][0], &Tile[0], 4, 6, 4);
-            for(int outh=0; outh < 4; ++outh)
-              for(int outw=0; outw < 4; ++outw) {
-                int outpos = n * outgap[0] + k * outgap[1] + (y * 4 + outh) * outgap[2] + (x * 4 + outw); 
-                out[outpos] += Tile[outh * 4 + outw];
-              }
           }
+
+          float tmp[4][6][FP32_PER_REG];
+          float Y[4][4][FP32_PER_REG];
+          svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, K - kk));
+          for (int xx = 0; xx < TILE_IN_HW; ++xx) {   // 按列产生结果。
+            z4 = svld1(pg, &M[0][xx][0]);
+            
+            z0 = z4;
+
+            z4 = svld1(pg, &M[1][xx][0]);
+            
+            z0 = svadd_f32_x(pg, z0, z4);
+            z1 = z4;
+            z2 = z4;
+            z3 = z4;
+            
+            z4 = svld1(pg, &M[2][xx][0]);
+            
+            z0 = svadd_f32_x(pg, z0, z4);
+            z1 = svsub_f32_x(pg, z1, z4);
+            z2 = svadd_f32_x(pg, z2, z4);
+            z3 = svsub_f32_x(pg, z3, z4);
+
+            z4 = svld1(pg, &M[3][xx][0]);
+
+            z0 = svadd_f32_x(pg, z0, z4);
+            z1 = svmla_f32_x(pg, z1, z26, z4);
+            z2 = svmla_f32_x(pg, z2, z28, z4);
+            z3 = svmla_f32_x(pg, z3, z23, z4);
+
+            z4 = svld1(pg, &M[4][xx][0]);
+
+            z0 = svadd_f32_x(pg, z0, z4);
+            z1 = svmla_f32_x(pg, z1, z27, z4);
+            z2 = svmla_f32_x(pg, z2, z28, z4);
+            z3 = svmla_f32_x(pg, z3, z22, z4);
+
+            z4 = svld1(pg, &M[5][xx][0]);
+
+            z3 = svadd_f32_x(pg, z3, z4);
+
+            svst1_f32(pg, &tmp[0][xx][0], z0);
+            svst1_f32(pg, &tmp[1][xx][0], z1);
+            svst1_f32(pg, &tmp[2][xx][0], z2);
+            svst1_f32(pg, &tmp[3][xx][0], z3);
+          }
+
+          for (int yy = 0; yy < TILE_OUT_HW; ++yy) {   // 按行产生结果。
+            z4 = svld1(pg, &tmp[yy][0][0]);
+            
+            z0 = z4;
+
+            z4 = svld1(pg, &tmp[yy][1][0]);
+            
+            z0 = svadd_f32_x(pg, z0, z4);
+            z1 = z4;
+            z2 = z4;
+            z3 = z4;
+            
+            z4 = svld1(pg, &tmp[yy][2][0]);
+            
+            z0 = svadd_f32_x(pg, z0, z4);
+            z1 = svsub_f32_x(pg, z1, z4);
+            z2 = svadd_f32_x(pg, z2, z4);
+            z3 = svsub_f32_x(pg, z3, z4);
+
+            z4 = svld1(pg, &tmp[yy][3][0]);
+
+            z0 = svadd_f32_x(pg, z0, z4);
+            z1 = svmla_f32_x(pg, z1, z26, z4);
+            z2 = svmla_f32_x(pg, z2, z28, z4);
+            z3 = svmla_f32_x(pg, z3, z23, z4);
+
+            z4 = svld1(pg, &tmp[yy][4][0]);
+
+            z0 = svadd_f32_x(pg, z0, z4);
+            z1 = svmla_f32_x(pg, z1, z27, z4);
+            z2 = svmla_f32_x(pg, z2, z28, z4);
+            z3 = svmla_f32_x(pg, z3, z22, z4);  // BUG Here 
+
+            z4 = svld1(pg, &tmp[yy][5][0]);
+
+            z3 = svadd_f32_x(pg, z3, z4);
+
+            svst1_f32(pg, &Y[yy][0][0], z0);
+            svst1_f32(pg, &Y[yy][1][0], z1);
+            svst1_f32(pg, &Y[yy][2][0], z2);
+            svst1_f32(pg, &Y[yy][3][0], z3);
+          }
+          for(int k = kk; k < kk + MIN(FP32_PER_REG, K - kk); ++k)
+            for(int i = 0; i < TILE_OUT_HW; ++i)
+              for(int j = 0; j < TILE_OUT_HW; ++j) {
+                out[(long)((n * K + k) * outHeight + y * 4 + i) * outWidth + x * 4 + j] = Y[i][j][k - kk];
+              }
         }
       }
     }
