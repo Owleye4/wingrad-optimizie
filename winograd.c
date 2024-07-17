@@ -127,14 +127,14 @@ void u_arr_K66C_to_KC66(float* __restrict__ u_arr, int K, int C, float* __restri
 }
 
 void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __restrict__ u_arr) {
-  // filer_KHWC[K][3][3][C]
-  // u_arr[K][6][6][C]
-  float* tmp_u = malloc(sizeof(float) * K * 6 * 3 * C); 
+  /**
+    * @param filer_KHWC[K][3][3][C]
+    * @param u_arr[K][6][6][C]
+    */
   PRAGMA_OMP_PARALLEL_FOR()
   for (int k = 0; k < K; ++k) {
     float* filter_ptr = filer_KHWC + k * 3 * 3 * C;
     float* u_arr_ptr = u_arr + k * 6 * 6 * C;
-    float* tmp_u_ptr = tmp_u + k * 6 * 3 * C;
     DECLARE_SVE_FP32_REGS();
     z25 = svdup_f32(1.0f);
     z26 = svdup_f32(- 1.0f / 6.0f );
@@ -144,10 +144,11 @@ void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __re
     z30 = svdup_f32( 1.0f / 12.0f );
     z31 = svdup_f32( 1.0f / 24.0f );
     for(int c = 0; c < C; c += FP32_PER_REG) {
+      float tmp[6][3][FP32_PER_REG];
       svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C-c));
       // G * filter
       for (int i = 0; i < FLT_HW; ++i) {     // 遍历列
-        z6 = svld1(pg, filter_ptr + i * 3 * C + 0 * C + c);
+        z6 = svld1(pg, filter_ptr + 0 * 3 * C + i * C + c);
         
         z0 = svmul_f32_x(pg, z28, z6);
         z1 = svmul_f32_x(pg, z26, z6);
@@ -155,7 +156,7 @@ void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __re
         z3 = svmul_f32_x(pg, z31, z6);
         z4 = svmul_f32_x(pg, z31, z6);
 
-        z6 = svld1(pg, filter_ptr + i * 3 * C + 1 * C + c);
+        z6 = svld1(pg, filter_ptr + 1 * 3 * C + i * C + c);
         
         // z0 += 0;
         z1 = svmla_f32_x(pg, z1, z26, z6);
@@ -163,7 +164,7 @@ void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __re
         z3 = svmla_f32_x(pg, z3, z30, z6);
         z4 = svmla_f32_x(pg, z4, z27, z6);
         // z5 += 0;
-        z6 = svld1(pg, filter_ptr + i * 3 * C + 2 * C + c);
+        z6 = svld1(pg, filter_ptr + 2 * 3 * C + i * C + c);
         
         // z0 += 0;
         z1 = svmla_f32_x(pg, z1, z26, z6);
@@ -172,16 +173,16 @@ void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __re
         z4 = svmla_f32_x(pg, z4, z29, z6);
         z5 = z6;
 
-        svst1_f32(pg, tmp_u_ptr +  0 * 3 * C + i * C + c, z0);
-        svst1_f32(pg, tmp_u_ptr +  1 * 3 * C + i * C + c, z1);
-        svst1_f32(pg, tmp_u_ptr +  2 * 3 * C + i * C + c, z2);
-        svst1_f32(pg, tmp_u_ptr +  3 * 3 * C + i * C + c, z3);
-        svst1_f32(pg, tmp_u_ptr +  4 * 3 * C + i * C + c, z4);
-        svst1_f32(pg, tmp_u_ptr +  5 * 3 * C + i * C + c, z5);
+        svst1_f32(pg, tmp[0][i], z0);
+        svst1_f32(pg, tmp[1][i], z1);
+        svst1_f32(pg, tmp[2][i], z2);
+        svst1_f32(pg, tmp[3][i], z3);
+        svst1_f32(pg, tmp[4][i], z4);
+        svst1_f32(pg, tmp[5][i], z5);
       }
       // filter * G_T
       for (int i = 0; i < TILE_IN_HW; ++i) {
-        z6 = svld1(pg, tmp_u_ptr + i * 3 * C + 0 * C + c);
+        z6 = svld1(pg, tmp[i][0]);
         
         z0 = svmul_f32_x(pg, z28, z6);
         z1 = svmul_f32_x(pg, z26, z6);
@@ -189,7 +190,7 @@ void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __re
         z3 = svmul_f32_x(pg, z31, z6);
         z4 = svmul_f32_x(pg, z31, z6);
 
-        z6 = svld1(pg, tmp_u_ptr + i * 3 * C + 1 * C + c);
+        z6 = svld1(pg, tmp[i][1]);
         
         // z0 += 0;
         z1 = svmla_f32_x(pg, z1, z26, z6);
@@ -197,7 +198,7 @@ void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __re
         z3 = svmla_f32_x(pg, z3, z30, z6);
         z4 = svmla_f32_x(pg, z4, z27, z6);
         // z5 += 0;
-        z6 = svld1(pg, tmp_u_ptr + i * 3 * C + 2 * C + c);
+        z6 = svld1(pg, tmp[i][2]);
         
         // z0 += 0;
         z1 = svmla_f32_x(pg, z1, z26, z6);
@@ -206,16 +207,16 @@ void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, float* __re
         z4 = svmla_f32_x(pg, z4, z29, z6);
         z5 = z6;
 
-        svst1_f32(pg, u_arr_ptr +  0 * 6 * C + i * C + c, z0);
-        svst1_f32(pg, u_arr_ptr +  1 * 6 * C + i * C + c, z1);
-        svst1_f32(pg, u_arr_ptr +  2 * 6 * C + i * C + c, z2);
-        svst1_f32(pg, u_arr_ptr +  3 * 6 * C + i * C + c, z3);
-        svst1_f32(pg, u_arr_ptr +  4 * 6 * C + i * C + c, z4);
-        svst1_f32(pg, u_arr_ptr +  5 * 6 * C + i * C + c, z5);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 0 * C + c, z0);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 1 * C + c, z1);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 2 * C + c, z2);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 3 * C + c, z3);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 4 * C + c, z4);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 5 * C + c, z5);
       }
     }
   }
-  free(tmp_u);
+
 }
 
 // User API for winograd F(2,3)

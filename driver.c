@@ -124,11 +124,11 @@ void winograd_conv(const int layer_idx, const int validation_mode,
 //  V = (float *)aligned_alloc(64, sizeof(float) * 4 * 4 * C * P);
 //  M = (float *)aligned_alloc(64, sizeof(float) * 4 * 4 * K * P);
 #pragma omp parallel for private(i)
-  for (long i = 0; i < (size_t) batch * C * sizeI; i++) image[i] = (float)(i % 10 + 1);
-    // image[i] = rand()%10;
+  for (long i = 0; i < (size_t) batch * C * sizeI; i++) // image[i] = (float)(i % 10 + 1);
+    image[i] = rand()%10;
 #pragma omp parallel for private(i)
-  for (long i = 0; i < K * C * sizeF; i++) filter[i] = (float)(i / sizeF + 1);
-  // filter[i] = rand()%10;
+  for (long i = 0; i < K * C * sizeF; i++) // filter[i] = (float)(i / sizeF + 1);
+    filter[i] = rand()%10;
 
   // Warm up
   if (validation_mode) {  // Verify mode. Check the result
@@ -155,7 +155,7 @@ void winograd_conv(const int layer_idx, const int validation_mode,
         layer_idx, C, irows, icols, K, batch);
     long n;
     for (n = 0; n < (long) batch * sizeO * K; n++)
-      if (fabs((out[n] - out_ref[n]) / out_ref[n]) > 1e-4) {
+      if (fabs((out[n] - out_ref[n]) / out_ref[n]) > 1e-4 || isnan(out[n])) {
         printf(
             "Validation Failed ! winogradConv[%d] = %f || directConv[%d] = %f "
             "\n",
