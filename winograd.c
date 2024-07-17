@@ -110,7 +110,7 @@ void filter_KCHW_to_KHWC(float* __restrict__ filter, int K, int C, float* __rest
     for(int h = 0; h < FLT_HW; ++h)
       for(int w = 0; w < FLT_HW; ++w) {
         for(int c = 0; c < C; ++c)
-          // 注意伪共享
+          // 注意「伪共享」
           filer_KHWC[k * 3 * 3 * C + h * 3 * C + w * C + c] 
                     = filter[k * C * 3 * 3 + c * 3 * 3 + h * 3 + w];
         }
@@ -260,24 +260,20 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
     };
   memset(out, 0, N * outgap[0] * sizeof(float));
 
-  float* u_arr = (float*) malloc(sizeof(float) * K * 6 * 6 * C);
-  float* u_arr_trans = (float*) malloc(sizeof(float) * K * 6 * 6 * C);
-  assert(u_arr != NULL);
-  assert(u_arr_trans != NULL);
-  float* filer_KHWC = (float*) malloc(K * C * 3 * 3 * sizeof(float));
-  assert(filer_KHWC != NULL);
+  float* u_arr      = (float*) malloc(sizeof(float) * K * 6 * 6 * C);     assert(u_arr != NULL);
+  float* filer_KHWC = (float*) malloc(K * C * 3 * 3 * sizeof(float));     assert(filer_KHWC != NULL);
 
   filter_KCHW_to_KHWC(filter, K, C, filer_KHWC);
   filter_transform(filer_KHWC, K, C, u_arr);
 
-  float* image_NHWC =  (float*) malloc(sizeof(float) * N * C * inHeight * inWidth);
+  float* image_NHWC =  (float*) malloc(sizeof(float) * N * C * inHeight * inWidth);      assert(image_NHWC != NULL);
 
   Image_NCHW_to_NHWC(image, N, C, inHeight, inWidth, image_NHWC);
 
+  // float* u_arr_trans = (float*) malloc(sizeof(float) * K * 6 * 6 * C);   assert(u_arr_trans != NULL);
   // u_arr_K66C_to_KC66(u_arr, K, C, u_arr_trans);
-
-  free(u_arr);
-  u_arr = u_arr_trans;
+  // free(u_arr);
+  // u_arr = u_arr_trans;
 
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(3)
   for (int k = 0; k < K; ++k) {
@@ -328,7 +324,7 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
             float M[6][6];
             for(int yy = 0; yy < TILE_IN_HW; ++yy) 
               for(int xx = 0; xx < TILE_IN_HW; ++xx){
-                svst1_f32(svptrue_b32(), (float *)&U[yy][xx], svld1(svptrue_b32(), u_arr + k * FLT_HW * FLT_HW * C + yy * FLT_HW * C + xx * C + c));
+                svst1_f32(svptrue_b32(), (float *)&U[yy][xx], svld1(svptrue_b32(), u_arr + k * TILE_IN_HW * TILE_IN_HW * C + yy * TILE_IN_HW * C + xx * C + c));
               }
 
 
