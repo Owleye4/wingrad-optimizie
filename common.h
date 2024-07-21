@@ -52,8 +52,17 @@
 #define MAX(A, B) (((A) > (B)) ? (A) : (B))
 
 #define FLT_HW 3
+#define FLT_H 3
+#define FLT_W 3
+
 #define TILE_IN_HW 6
+#define TILE_IN_H 6
+#define TILE_IN_W 6
+
 #define TILE_OUT_HW 4
+#define TILE_OUT_H 4
+#define TILE_OUT_W 4
+
 
 #define ROUND(A, B) ((A) / (B) * (B))
 #define ROUND_UP(A, B) (((A) + (B) - 1) / (B) * (B))
@@ -74,3 +83,5 @@
 	#define PREFETCH_WRITE(X)
 #endif
 #define ATTRIBUTE_ALIGN(X) __attribute__((aligned ((X))))
+
+#define ALWAYS_INLINE inline __attribute__((always_inline))
