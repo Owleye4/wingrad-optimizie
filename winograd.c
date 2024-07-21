@@ -64,7 +64,7 @@ inline void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, floa
       svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C-c));
       // G * filter
       for (int i = 0; i < FLT_HW; ++i) {     // 这个循环按row遍历filter（按G以及结果的column）， 按列产生结果。
-        z6 = svld1(pg, filter_ptr + i * 3 * C + 0 * C + c);
+        z6 = svld1(pg, filter_ptr + 0 * 3 * C + i * C + c);
         
         z0 = svmul_f32_x(pg, z28, z6);
         z1 = svmul_f32_x(pg, z26, z6);
@@ -72,7 +72,7 @@ inline void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, floa
         z3 = svmul_f32_x(pg, z31, z6);
         z4 = svmul_f32_x(pg, z31, z6);
 
-        z6 = svld1(pg, filter_ptr + i * 3 * C + 1 * C + c);
+        z6 = svld1(pg, filter_ptr + 1 * 3 * C + i * C + c);
         
         // z0 += 0;
         z1 = svmla_f32_x(pg, z1, z26, z6);
@@ -80,7 +80,7 @@ inline void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, floa
         z3 = svmla_f32_x(pg, z3, z30, z6);
         z4 = svmla_f32_x(pg, z4, z27, z6);
         // z5 += 0;
-        z6 = svld1(pg, filter_ptr + i * 3 * C + 2 * C + c);
+        z6 = svld1(pg, filter_ptr + 2 * 3 * C + i * C + c);
         
         // z0 += 0;
         z1 = svmla_f32_x(pg, z1, z26, z6);
@@ -123,12 +123,12 @@ inline void filter_transform(float* __restrict__ filer_KHWC, int K,  int C, floa
         z4 = svmla_f32_x(pg, z4, z29, z6);
         z5 = z6;
 
-        svst1_f32(pg, u_arr_ptr + 0 * 6 * C + i * C + c, z0);
-        svst1_f32(pg, u_arr_ptr + 1 * 6 * C + i * C + c, z1);
-        svst1_f32(pg, u_arr_ptr + 2 * 6 * C + i * C + c, z2);
-        svst1_f32(pg, u_arr_ptr + 3 * 6 * C + i * C + c, z3);
-        svst1_f32(pg, u_arr_ptr + 4 * 6 * C + i * C + c, z4);
-        svst1_f32(pg, u_arr_ptr + 5 * 6 * C + i * C + c, z5);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 0 * C + c, z0);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 1 * C + c, z1);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 2 * C + c, z2);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 3 * C + c, z3);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 4 * C + c, z4);
+        svst1_f32(pg, u_arr_ptr + i * 6 * C + 5 * C + c, z5);
       }
     }
   }
@@ -162,13 +162,13 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
     };
   memset(out, 0, N * outgap[0] * sizeof(float));
 
-  float* u_arr      = (float*) malloc(sizeof(float) * K * 6 * 6 * C);     assert(u_arr != NULL);
-  float* filer_KHWC = (float*) malloc(K * C * 3 * 3 * sizeof(float));     assert(filer_KHWC != NULL);
+  float* u_arr      = (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * K * 6 * 6 * C);     assert(u_arr != NULL);
+  float* filer_KHWC = (float*) aligned_alloc(ALLOC_ALIGNMENT, K * C * 3 * 3 * sizeof(float));     assert(filer_KHWC != NULL);
 
   filter_KCHW_to_KHWC(filter, K, C, filer_KHWC);
   filter_transform(filer_KHWC, K, C, u_arr);
 
-  float* image_NHWC =  (float*) malloc(sizeof(float) * N * C * inHeight * inWidth);      assert(image_NHWC != NULL);
+  float* image_NHWC =  (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * N * C * inHeight * inWidth);      assert(image_NHWC != NULL);
 
   Image_NCHW_to_NHWC(image, N, C, inHeight, inWidth, image_NHWC);
 

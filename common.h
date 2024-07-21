@@ -1,8 +1,16 @@
 #pragma once
 #include <arm_sve.h>
 #define PRAGMA(X) _Pragma(#X)
-#define PRAGMA_OMP_PARALLEL_FOR() PRAGMA(omp parallel for)
-#define PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(X) PRAGMA(omp parallel for collapse(X))
+#define OMP
+#ifdef OMP
+	#define PRAGMA_OMP_PARALLEL_FOR() PRAGMA(omp parallel for)
+	#define PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(X) PRAGMA(omp parallel for collapse(X))
+	#define PRAGMA_OMP_PARALLEL_FOR_COLLAPSE_PROC_BIND_SPREAD(X) PRAGMA(omp parallel for collapse(X) proc_bind(spread))
+#else
+	#define PRAGMA_OMP_PARALLEL_FOR() 
+	#define PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(X) 
+	#define PRAGMA_OMP_PARALLEL_FOR_COLLAPSE_PROC_BIND_SPREAD(X) 
+#endif
 
 #define FP32_PER_REG 8
 
@@ -44,6 +52,25 @@
 #define MAX(A, B) (((A) > (B)) ? (A) : (B))
 
 #define FLT_HW 3
-#define TILE_OUT_HW 4
 #define TILE_IN_HW 6
+#define TILE_OUT_HW 4
 
+#define ROUND(A, B) ((A) / (B) * (B))
+#define ROUND_UP(A, B) (((A) + (B) - 1) / (B) * (B))
+
+#define DIVIDE(A, B) ((A) / (B))
+#define DIVIDE_UP(A, B) (((A) + (B) - 1) / (B))
+
+#define ALLOC_ALIGNMENT 4096  // Page size
+
+#define OMP_GET_THREAD_ID() omp_get_thread_num()	// the thread id, not the number of threads
+#define OMP_GET_MAX_THREADS() omp_get_max_threads()
+#define PREFETCH
+#ifdef PREFETCH
+	#define PREFETCH_READ(X) __builtin_prefetch(&(X), 0)
+	#define PREFETCH_WRITE(X) __builtin_prefetch(&(X), 1)
+#else
+	#define PREFETCH_READ(X)
+	#define PREFETCH_WRITE(X)
+#endif
+#define ATTRIBUTE_ALIGN(X) __attribute__((aligned ((X))))
