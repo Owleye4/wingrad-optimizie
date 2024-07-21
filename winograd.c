@@ -4,6 +4,106 @@
 #include <string.h>
 #include <arm_sve.h>
 #include "common.h"
+static inline void boundary_treatment(float *__restrict__ image_NHWC, const int H,
+                 const int W, const int C, float *__restrict__ filter_KHWC,
+                 const int K, const int N, float *__restrict__ out) {
+  long inpos, knpos, outpos;
+  int dimIn[4] = {N, H, W, C};
+  int dimKn[4] = {K, 3, 3, C};
+  int dimOut[4] = {N, K, H - 2, W - 2};
+
+  int ingap[3] = {dimIn[1] * dimIn[2] * dimIn[3], dimIn[2] * dimIn[3],
+                  dimIn[3]};
+  int kngap[3] = {dimKn[1] * dimKn[2] * dimKn[3], dimKn[2] * dimKn[3],
+                  dimKn[3]};
+  int outgap[3] = {dimOut[1] * dimOut[2] * dimOut[3], dimOut[2] * dimOut[3],
+                   dimOut[3]};
+
+  long outHeight = H - 2;
+  long outWidth = W - 2;
+
+
+  if(outHeight % TILE_OUT_HW > 0){
+  #pragma omp parallel for private(inpos, knpos, outpos) collapse(2)
+  for (long inn = 0; inn < N; inn++)
+    for (long knn = 0; knn < K; knn++)
+      for (int inc = 0; inc < C ; inc += FP32_PER_REG)
+        for (long outh = (outHeight / TILE_OUT_HW) * TILE_OUT_HW; outh < outHeight; outh++) {
+          for (long outw = 0; outw < (outWidth / TILE_OUT_HW) * TILE_OUT_HW; outw++) {
+            outpos = inn * outgap[0] + knn * outgap[1] + outh * outgap[2] + outw;
+            svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C - inc));
+
+            for (long knh = 0; knh < 3; knh++) {
+              for (long knw = 0; knw < 3; knw++) {
+                inpos = inn * ingap[0] + (outh + knh) * W * C + (outw + knw) * C + inc;
+                knpos = knn * kngap[0] + knh * 3 * C + knw * C + inc;
+
+                svfloat32_t z0 = svld1(pg, image_NHWC + inpos);
+                svfloat32_t z1 = svld1(pg, filter_KHWC + knpos);
+
+                svfloat32_t z3 = svmul_f32_x(pg, z0, z1);
+                float sum = svaddv_f32(pg, z3);
+                out[outpos] += sum;
+              }
+            }
+          }
+        }
+  }
+
+  if (outWidth % TILE_OUT_HW > 0)
+  #pragma omp parallel for private(inpos, knpos, outpos)
+  for (long inn = 0; inn < N; inn++)
+    for (long knn = 0; knn < K; knn++)
+      for (int inc = 0; inc < C ; inc += FP32_PER_REG) {
+        for(long outh = 0; outh < (outHeight / TILE_OUT_HW) * TILE_OUT_HW; outh++){
+          for (long outw = (outWidth / TILE_OUT_HW) * TILE_OUT_HW; outw < outWidth; outw++){
+            outpos = inn * outgap[0] + knn * outgap[1] + outh * outgap[2] + outw;
+            svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C - inc));
+
+            for (long knh = 0; knh < 3; knh++) {
+              for (long knw = 0; knw < 3; knw++) {
+                inpos = inn * ingap[0] + (outh + knh) * W * C + (outw + knw) * C + inc;
+                knpos = knn * kngap[0] + knh * 3 * C + knw * C + inc;
+
+                svfloat32_t z0 = svld1(pg, image_NHWC + inpos);
+                svfloat32_t z1 = svld1(pg, filter_KHWC + knpos);
+
+                svfloat32_t z3 = svmul_f32_x(pg, z0, z1);
+                float sum = svaddv_f32(pg, z3);
+                out[outpos] += sum;
+              }
+            }
+          }
+        }
+      }
+
+  if(outHeight % TILE_OUT_HW > 0 && outWidth % TILE_OUT_HW > 0)
+  #pragma omp parallel for private(inpos, knpos, outpos)
+  for (long inn = 0; inn < N; inn++)
+    for (long knn = 0; knn < K; knn++)
+      for (int inc = 0; inc < C ; inc += FP32_PER_REG) 
+        for(long outh = (outHeight / TILE_OUT_HW) * TILE_OUT_HW; outh < outHeight; outh++)
+          for (long outw = (outWidth / TILE_OUT_HW) * TILE_OUT_HW; outw < outWidth; outw++){
+            outpos = inn * outgap[0] + knn * outgap[1] + outh * outgap[2] + outw;
+            svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C - inc));
+
+            for (long knh = 0; knh < 3; knh++) {
+              for (long knw = 0; knw < 3; knw++) {
+                inpos = inn * ingap[0] + (outh + knh) * W * C + (outw + knw) * C + inc;
+                knpos = knn * kngap[0] + knh * 3 * C + knw * C + inc;
+
+                svfloat32_t z0 = svld1(pg, image_NHWC + inpos);
+                svfloat32_t z1 = svld1(pg, filter_KHWC + knpos);
+
+                svfloat32_t z3 = svmul_f32_x(pg, z0, z1);
+                float sum = svaddv_f32(pg, z3);
+                out[outpos] += sum;
+              }
+            }
+          }
+
+}
+
 
 ALWAYS_INLINE void filter_KCHW_to_KHWC(float* __restrict__ filter, int K, int C, float* __restrict__ filer_KHWC) {
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)            // 注意「伪共享」
@@ -404,7 +504,6 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
     };
   #pragma omp parallel for simd aligned(out) schedule(static)
   for(int i = 0; i < N * outgap[0]; ++i) out[i] = 0;
-  // memset(out, 0, N * outgap[0] * sizeof(float));
 
   float* u_arr      =  (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * K * 6 * 6 * C);     
   assert(u_arr != NULL);
@@ -412,11 +511,27 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   assert(filer_KHWC != NULL);
   float* image_NHWC =  (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * N * C * inHeight * inWidth);
   assert(image_NHWC != NULL);
+  float* v_arr      =  (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * N * (outHeight / 4) * (outWidth / 4) * ROUND_UP(C, FP32_PER_REG) * 6 * 6 * FP32_PER_REG);
+  assert(v_arr != NULL);
 
   filter_KCHW_to_KHWC(filter, K, C, filer_KHWC);
   filter_transform_all(filer_KHWC, K, C, u_arr);
   Image_NCHW_to_NHWC(image, N, C, inHeight, inWidth, image_NHWC);
 
+  float (*V_tensor)[(outHeight / 4)][(outWidth / 4)][DIVIDE_UP(C, FP32_PER_REG)][6][6][FP32_PER_REG]
+        = (float (*)[(outHeight / 4)][(outWidth / 4)][DIVIDE_UP(C, FP32_PER_REG)][6][6][FP32_PER_REG]) v_arr;
+
+  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(3)
+  for (int n = 0; n < N; ++n) {
+    for (int y = 0; y < outHeight / 4; ++y) {
+      for (int x = 0; x < outWidth / 4; ++x) {
+        for (int c = 0; c < C; c += FP32_PER_REG) {
+         src_transform_sve(image_NHWC, C, inHeight, inWidth, n, c, y, x, V_tensor[n][y][x][c/FP32_PER_REG]);
+        }
+      }
+    }
+  }
+  
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(3)
   for (int kk = 0; kk < K; kk += FP32_PER_REG) {
     for (int n = 0; n < N; ++n) {
@@ -431,11 +546,11 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
             for (int c = 0; c < C; c += FP32_PER_REG) {
               // B_T * d
               float U[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
-              float V[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
+              // float V[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
               copy_filter(u_arr, C, k, c, U);
               // 这里有重复运算K次
-              src_transform_sve(image_NHWC, C, inHeight, inWidth, n, c, y, x, V);
-              hadamard_product(U, V, kk, k, C, c, M);
+              // src_transform_sve(...);
+              hadamard_product(U, V_tensor[n][y][x][c/FP32_PER_REG], kk, k, C, c, M);
             }
           }
           dest_tranform_sve(M, K, kk, Y);
@@ -445,8 +560,8 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
     }
   }
 
-  // 边缘处理
-  // TODO
+  // 边界处理
+  boundary_treatment(image_NHWC, inHeight, inWidth, C, filer_KHWC, K, N, out);
 
   free(u_arr);
   free(image_NHWC);
