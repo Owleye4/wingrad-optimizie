@@ -219,7 +219,7 @@ ALWAYS_INLINE void filterTransform(float* __restrict__ packedFilter, FltShape fs
   }
 }
 
-ALWAYS_INLINE void srcTransformSVE(float* __restrict__ packedImage, ImgShape is, int tileNo, int c, float* V, VShape vs, TileShape ts) {
+ALWAYS_INLINE void srcTransformSVE(float* __restrict__ packedImage, ImgShape is,  float* V, VShape vs, int tileNo, TileShape ts, int c) {
   TileIndex ti = getTileIndex(tileNo, ts);
   int n = ti.b, x = ti.tw, y = ti.th;
   int inHeight = is.h, inWidth = is.w, C = is.ic;
@@ -508,7 +508,7 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   PRAGMA_OMP_PARALLEL_FOR()
   for (int tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
     for (int c = 0; c < C; c += FP32_PER_REG) {
-      srcTransformSVE(imagePacked, is, tileNo, c, V, vs, ts);
+      srcTransformSVE(imagePacked, is, V, vs, tileNo, ts, c);
     }
   }
   
@@ -524,7 +524,6 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
         for (int c = 0; c < C; c += FP32_PER_REG) {
           float u[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
           copyFilter(U, C, k, c, u);
-          // hadamardProduct(u, V_tensor[n][y][x][c/FP32_PER_REG], kk, k, C, c, M);
           hadamardProduct(u, V, vs, tileNo, kk, k, C, c, M);
         }
       }
