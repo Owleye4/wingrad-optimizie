@@ -1,5 +1,10 @@
 #pragma once
 #include <arm_sve.h>
+#include <time.h>
+#include <assert.h>
+#include <sys/time.h>
+#include <omp.h>
+
 #define PRAGMA(X) _Pragma(#X)
 #define OMP
 #ifdef OMP
@@ -55,6 +60,10 @@
 #define FLT_H 3
 #define FLT_W 3
 
+#define FLT_H 3
+#define FLT_W 3
+#define FLT_HW 3
+
 #define TILE_IN_HW 6
 #define TILE_IN_H 6
 #define TILE_IN_W 6
@@ -85,3 +94,59 @@
 #define ATTRIBUTE_ALIGN(X) __attribute__((aligned ((X))))
 
 #define ALWAYS_INLINE inline __attribute__((always_inline))
+
+
+ALWAYS_INLINE double timestamp() {
+  struct timeval tv;
+  gettimeofday(&tv, 0);
+  return tv.tv_sec * 1.0e3 + tv.tv_usec * 1.e-3;
+}
+double times_ms[10];
+double start_time;
+
+const int k_blk_size = 64;
+const int c_blk_size = 32;
+
+typedef struct {
+  int b;
+  int th;
+  int tw;
+} TileIndex;
+
+
+// Tensors' shape, pass them when passing tensor as a pointer
+typedef struct {
+  int oc;	// number of output channels
+  int ic;   // number of input channels
+  int h;
+  int w;
+} FilterShape;
+
+
+typedef struct {
+  int numImg;
+  int ic;   // number of input channels
+  int h;
+  int w;
+} ImageShape;
+
+typedef struct {
+  int oc;
+  int ic;   // number of input channels
+  int h;
+  int w;
+} UShape;
+
+typedef struct {
+  int numTile;
+  int ic;   // number of input channels
+  int h;
+  int w;
+} VShape;
+
+typedef struct {
+  int numImg;
+  int oc;   // number of output channels
+  int h;
+  int w;
+} OutShape;
