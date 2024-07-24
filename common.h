@@ -78,6 +78,8 @@
 
 #define DIVIDE(A, B) ((A) / (B))
 #define DIVIDE_UP(A, B) (((A) + (B) - 1) / (B))
+#define DIV(A, B) ((A) / (B))
+#define DIV_UP(A, B) (((A) + (B) - 1) / (B))
 
 #define ALLOC_ALIGNMENT 4096  // Page size
 
@@ -120,7 +122,7 @@ typedef struct {
   int ic;   // number of input channels
   int h;
   int w;
-} FilterShape;
+} FltShape;
 
 
 typedef struct {
@@ -128,7 +130,7 @@ typedef struct {
   int ic;   // number of input channels
   int h;
   int w;
-} ImageShape;
+} ImgShape;
 
 typedef struct {
   int oc;
@@ -138,7 +140,7 @@ typedef struct {
 } UShape;
 
 typedef struct {
-  int numTile;
+  int numTileTotal;
   int ic;   // number of input channels
   int h;
   int w;
@@ -150,3 +152,57 @@ typedef struct {
   int h;
   int w;
 } OutShape;
+
+typedef struct {
+  int numImg;   // number of output channels
+  int numTilePerImg;
+  int numTileTotal;
+  int h;
+  int w;
+} TileShape;
+
+OutShape getOutShape(ImgShape is, FltShape fs) {
+  OutShape os;
+  os.numImg = is.numImg;
+  os.oc = fs.oc;
+  os.h = is.h - fs.h + 1;
+  os.w = is.w - fs.w + 1;
+  return os;
+}
+
+TileShape getTileShape(ImgShape is, OutShape os) {
+  TileShape ts;
+  ts.h = DIV(os.h, TILE_OUT_H);
+  ts.w = DIV(os.w, TILE_OUT_W);
+  ts.numImg = is.numImg;
+  ts.numTilePerImg = ts.h * ts.w;
+  ts.numTileTotal = ts.numTilePerImg * ts.numImg;
+  return ts;
+}
+
+UShape getUShape(FltShape fs) {
+  UShape us;
+  us.oc = fs.oc;
+  us.ic = fs.ic;
+  us.h = TILE_IN_W;
+  us.w = TILE_IN_W;
+  return us;
+}
+
+VShape getVShape(ImgShape is, TileShape ts) {
+  VShape vs;
+  vs.numTileTotal = ts.numTileTotal;
+  vs.ic = is.ic;
+  vs.h = TILE_IN_H;
+  vs.w = TILE_IN_W;
+  return vs;
+}
+
+TileIndex getTileIndex(int tileNo, TileShape ts) {
+  TileIndex ti;
+  ti.b = tileNo / ts.numTilePerImg;
+  tileNo = tileNo % ts.numTilePerImg;
+  ti.th = tileNo / ts.w;
+  ti.tw = tileNo % ts.w;
+  return ti;
+}

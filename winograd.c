@@ -4,9 +4,8 @@
 #include <string.h>
 #include <arm_sve.h>
 #include "common.h"
-static inline void boundary_treatment(float *__restrict__ image_NHWC, const int H,
-                 const int W, const int C, float *__restrict__ filter_KHWC,
-                 const int K, const int N, float *__restrict__ out) {
+ALWAYS_INLINE void boundaryTreatment(float *__restrict__ packedImage, ImgShape is, float *__restrict__ packedFilter, FltShape fs, float *__restrict__ out) {
+  int N = is.numImg, C = is.ic, H = is.h, W = is.w, K = fs.oc;
   long inpos, knpos, outpos;
   int dimIn[4] = {N, H, W, C};
   int dimKn[4] = {K, 3, 3, C};
@@ -38,8 +37,8 @@ static inline void boundary_treatment(float *__restrict__ image_NHWC, const int 
                 inpos = inn * ingap[0] + (outh + knh) * W * C + (outw + knw) * C + inc;
                 knpos = knn * kngap[0] + knh * 3 * C + knw * C + inc;
 
-                svfloat32_t z0 = svld1(pg, image_NHWC + inpos);
-                svfloat32_t z1 = svld1(pg, filter_KHWC + knpos);
+                svfloat32_t z0 = svld1(pg, packedImage + inpos);
+                svfloat32_t z1 = svld1(pg, packedFilter + knpos);
 
                 svfloat32_t z3 = svmul_f32_x(pg, z0, z1);
                 float sum = svaddv_f32(pg, z3);
@@ -65,8 +64,8 @@ static inline void boundary_treatment(float *__restrict__ image_NHWC, const int 
                 inpos = inn * ingap[0] + (outh + knh) * W * C + (outw + knw) * C + inc;
                 knpos = knn * kngap[0] + knh * 3 * C + knw * C + inc;
 
-                svfloat32_t z0 = svld1(pg, image_NHWC + inpos);
-                svfloat32_t z1 = svld1(pg, filter_KHWC + knpos);
+                svfloat32_t z0 = svld1(pg, packedImage + inpos);
+                svfloat32_t z1 = svld1(pg, packedFilter + knpos);
 
                 svfloat32_t z3 = svmul_f32_x(pg, z0, z1);
                 float sum = svaddv_f32(pg, z3);
@@ -92,8 +91,8 @@ static inline void boundary_treatment(float *__restrict__ image_NHWC, const int 
                 inpos = inn * ingap[0] + (outh + knh) * W * C + (outw + knw) * C + inc;
                 knpos = knn * kngap[0] + knh * 3 * C + knw * C + inc;
 
-                svfloat32_t z0 = svld1(pg, image_NHWC + inpos);
-                svfloat32_t z1 = svld1(pg, filter_KHWC + knpos);
+                svfloat32_t z0 = svld1(pg, packedImage + inpos);
+                svfloat32_t z1 = svld1(pg, packedFilter + knpos);
 
                 svfloat32_t z3 = svmul_f32_x(pg, z0, z1);
                 float sum = svaddv_f32(pg, z3);
@@ -104,44 +103,32 @@ static inline void boundary_treatment(float *__restrict__ image_NHWC, const int 
 
 }
 
-
-ALWAYS_INLINE void filter_KCHW_to_KHWC(float* __restrict__ filter, int K, int C, float* __restrict__ filer_KHWC) {
+ALWAYS_INLINE void filterIcPack(float* __restrict__ filter, FltShape fs, float* __restrict__ packedFiler) {
+  int K = fs.oc, C = fs.ic;
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)            // 注意「伪共享」
   for(int k = 0; k < K; ++k)
     for(int h = 0; h < FLT_HW; ++h)
       for(int w = 0; w < FLT_HW; ++w)
         for(int c = 0; c < C; ++c)
-          filer_KHWC[k * 3 * 3 * C + h * 3 * C + w * C + c] 
+          packedFiler[k * 3 * 3 * C + h * 3 * C + w * C + c] 
                     = filter[k * C * 3 * 3 + c * 3 * 3 + h * 3 + w];
 }
 
-ALWAYS_INLINE void u_arr_K66C_to_KC66(float* __restrict__ u_arr, int K, int C, float* __restrict__ u_arr_out) {
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for(int k = 0; k < K; ++k)
-    for(int h = 0; h < TILE_IN_H; ++h)
-      for(int w = 0; w < TILE_IN_W; ++w) 
-        for(int c = 0; c < C; ++c)
-          u_arr_out[k * C * 6 * 6 + c * 6 * 6 + h * 6 + w] 
-                    = u_arr[k * 6 * 6 * C + h * 6 * C + w * C + c];
-}
-
-ALWAYS_INLINE void Image_NCHW_to_NHWC(float* __restrict__ Image, int N, int C, int H, int W, float* __restrict__ Image_NHWC) {
+ALWAYS_INLINE void ImageIcPack(float* __restrict__ Image, ImgShape is,  float* __restrict__ packedImage) {
+  int N = is.numImg, C = is.ic, H = is.h, W = is.w;
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
   for(int n = 0; n < N; ++n)
     for(int h = 0; h < H; ++h)
       for(int w = 0; w < W; ++w)
         for(int c = 0; c < C; ++c)
-          Image_NHWC[n * H * W * C + h * W * C + w * C + c] 
+          packedImage[n * H * W * C + h * W * C + w * C + c] 
                     = Image[n * C * H * W + c * H * W + h * W + w];
 }
 
-// trancform the (k, c) filter from filer_KHWC, store to u_arr[K][C][6][6]
-ALWAYS_INLINE void filter_transform_sve(float* __restrict__ filer_KHWC,
-                                    int C, float* __restrict__ u_arr, 
-                                    int k, int c
-                                  ) {
-  float* filter_ptr = filer_KHWC + k * 3 * 3 * C;
-  float* u_arr_ptr = u_arr + k * 6 * 6 * C;
+// trancform the (k, c) filter from filer_KHWC, store to u_arr[K][6][6][C]
+ALWAYS_INLINE void filterTransformSVE(float* __restrict__ packedFiler, int C, float* __restrict__ U, int k, int c) {
+  float* filter_ptr = packedFiler + k * 3 * 3 * C;
+  float* u_arr_ptr = U + k * 6 * 6 * C;
   float tmp[6][3][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
   DECLARE_SVE_FP32_REGS();
   z25 = svdup_f32(1.0f);
@@ -222,18 +209,20 @@ ALWAYS_INLINE void filter_transform_sve(float* __restrict__ filer_KHWC,
   }
 }
 
-ALWAYS_INLINE void filter_transform_all(float* __restrict__ filer_KHWC, int K,  int C, float* __restrict__ u_arr) {
+ALWAYS_INLINE void filterTransform(float* __restrict__ packedFilter, FltShape fs, float* __restrict__ U) {
+  int K = fs.oc, C = fs.ic;
   PRAGMA_OMP_PARALLEL_FOR()
   for (int k = 0; k < K; ++k) {
     for(int c = 0; c < C; c += FP32_PER_REG) {
-      filter_transform_sve(filer_KHWC, C, u_arr, k, c);
+      filterTransformSVE(packedFilter, C, U, k, c);
     }
   }
 }
 
-ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int inHeight, int inWidth, 
-                                    int n, int c, int y, int x, float V[TILE_IN_H][TILE_IN_W][FP32_PER_REG]
-                                    ) {
+ALWAYS_INLINE void srcTransformSVE(float* __restrict__ packedImage, ImgShape is, int tileNo, int c, float* V, VShape vs, TileShape ts) {
+  TileIndex ti = getTileIndex(tileNo, ts);
+  int n = ti.b, x = ti.tw, y = ti.th;
+  int inHeight = is.h, inWidth = is.w, C = is.ic;
   DECLARE_SVE_FP32_REGS();
   z22 = svdup_f32( -8.0f );
   z23 = svdup_f32(  8.0f );
@@ -245,15 +234,17 @@ ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int 
   z29 = svdup_f32( -4.0f );
   z30 = svdup_f32(  5.0f );
   z31 = svdup_f32( -5.0f );
-
+  float tmp[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
   svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C-c));
 
+  float (*Varr) [TILE_IN_W][C] = (float (*)[TILE_IN_W][C]) (V + tileNo * TILE_IN_H * TILE_IN_W * C);
+
   for (int xx = 0; xx < TILE_IN_W; ++xx) {   // 按列产生结果。
-    z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 0) * inWidth * C + (x * 4 + xx) * C + c);
+    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 0) * inWidth * C + (x * 4 + xx) * C + c);
 
     z0 = svmul_f32_x(pg, z28, z6);
 
-    z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 1) * inWidth * C + (x * 4 + xx) * C + c);
+    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 1) * inWidth * C + (x * 4 + xx) * C + c);
 
     z1 = svmul_f32_x(pg, z29, z6);
     z2 = svmul_f32_x(pg, z28, z6);
@@ -261,7 +252,7 @@ ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int 
     z4 = svmul_f32_x(pg, z26, z6);
     z5 = svmul_f32_x(pg, z28, z6);
 
-    z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 2) * inWidth * C + (x * 4 + xx) * C + c);
+    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 2) * inWidth * C + (x * 4 + xx) * C + c);
 
     z0 = svmla_f32_x(pg, z0, z31, z6);
     z1 = svmla_f32_x(pg, z1, z29, z6);
@@ -269,7 +260,7 @@ ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int 
     z3 = svmla_f32_x(pg, z3, z25, z6);
     z4 = svmla_f32_x(pg, z4, z25, z6);
 
-    z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 3) * inWidth * C + (x * 4 + xx) * C + c);
+    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 3) * inWidth * C + (x * 4 + xx) * C + c);
 
     z1 = svmla_f32_x(pg, z1, z24, z6);
     z2 = svmla_f32_x(pg, z2, z25, z6);
@@ -277,7 +268,7 @@ ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int 
     z4 = svmla_f32_x(pg, z4, z27, z6);
     z5 = svmla_f32_x(pg, z5, z31, z6);
 
-    z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 4) * inWidth * C + (x * 4 + xx) * C + c);
+    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 4) * inWidth * C + (x * 4 + xx) * C + c);
     
     z0 = svmla_f32_x(pg, z0, z24, z6);
     z1 = svmla_f32_x(pg, z1, z24, z6);
@@ -285,24 +276,24 @@ ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int 
     z3 = svmla_f32_x(pg, z3, z24, z6);
     z4 = svmla_f32_x(pg, z4, z24, z6);
 
-    z6 = svld1(pg, image_NHWC + n * inHeight * inWidth * C + (y * 4 + 5) * inWidth * C + (x * 4 + xx) * C + c);
+    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 5) * inWidth * C + (x * 4 + xx) * C + c);
 
     z5 = svmla_f32_x(pg, z5, z24, z6);
 
-    svst1_f32(pg, V[0][xx], z0);
-    svst1_f32(pg, V[1][xx], z1);
-    svst1_f32(pg, V[2][xx], z2);
-    svst1_f32(pg, V[3][xx], z3);
-    svst1_f32(pg, V[4][xx], z4);
-    svst1_f32(pg, V[5][xx], z5);
+    svst1_f32(pg, tmp[0][xx], z0);
+    svst1_f32(pg, tmp[1][xx], z1);
+    svst1_f32(pg, tmp[2][xx], z2);
+    svst1_f32(pg, tmp[3][xx], z3);
+    svst1_f32(pg, tmp[4][xx], z4);
+    svst1_f32(pg, tmp[5][xx], z5);
   }
 
   for (int yy = 0; yy < TILE_IN_H; ++yy) {   // 按行产生结果。
-    z6 = svld1(pg, V[yy][0]);
+    z6 = svld1(pg, tmp[yy][0]);
 
     z0 = svmul_f32_x(pg, z28, z6);
 
-    z6 = svld1(pg, V[yy][1]);
+    z6 = svld1(pg, tmp[yy][1]);
 
     z1 = svmul_f32_x(pg, z29, z6);
     z2 = svmul_f32_x(pg, z28, z6);
@@ -310,7 +301,7 @@ ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int 
     z4 = svmul_f32_x(pg, z26, z6);
     z5 = svmul_f32_x(pg, z28, z6);
 
-    z6 = svld1(pg, V[yy][2]);
+    z6 = svld1(pg, tmp[yy][2]);
 
     z0 = svmla_f32_x(pg, z0, z31, z6);
     z1 = svmla_f32_x(pg, z1, z29, z6);
@@ -318,7 +309,7 @@ ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int 
     z3 = svmla_f32_x(pg, z3, z25, z6);
     z4 = svmla_f32_x(pg, z4, z25, z6);
 
-    z6 = svld1(pg, V[yy][3]);
+    z6 = svld1(pg, tmp[yy][3]);
 
     z1 = svmla_f32_x(pg, z1, z24, z6);
     z2 = svmla_f32_x(pg, z2, z25, z6);
@@ -326,7 +317,7 @@ ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int 
     z4 = svmla_f32_x(pg, z4, z27, z6);
     z5 = svmla_f32_x(pg, z5, z31, z6);
 
-    z6 = svld1(pg, V[yy][4]);
+    z6 = svld1(pg, tmp[yy][4]);
     
     z0 = svmla_f32_x(pg, z0, z24, z6);
     z1 = svmla_f32_x(pg, z1, z24, z6);
@@ -334,29 +325,29 @@ ALWAYS_INLINE void src_transform_sve(float* __restrict__ image_NHWC, int C, int 
     z3 = svmla_f32_x(pg, z3, z24, z6);
     z4 = svmla_f32_x(pg, z4, z24, z6);
 
-    z6 = svld1(pg, V[yy][5]);
+    z6 = svld1(pg, tmp[yy][5]);
 
     z5 = svmla_f32_x(pg, z5, z24, z6);
 
-    svst1_f32(pg, V[yy][0], z0);
-    svst1_f32(pg, V[yy][1], z1);
-    svst1_f32(pg, V[yy][2], z2);
-    svst1_f32(pg, V[yy][3], z3);
-    svst1_f32(pg, V[yy][4], z4);
-    svst1_f32(pg, V[yy][5], z5);
+    svst1_f32(pg, &Varr[yy][0][c], z0);
+    svst1_f32(pg, &Varr[yy][1][c], z1);
+    svst1_f32(pg, &Varr[yy][2][c], z2);
+    svst1_f32(pg, &Varr[yy][3][c], z3);
+    svst1_f32(pg, &Varr[yy][4][c], z4);
+    svst1_f32(pg, &Varr[yy][5][c], z5);
   }
 }
 
-ALWAYS_INLINE void copy_filter(float* __restrict__ u_arr, int C, int k, int c, float U[TILE_IN_H][TILE_IN_W][FP32_PER_REG]) {
+ALWAYS_INLINE void copyFilter(float* __restrict__ U, int C, int k, int c, float u[TILE_IN_H][TILE_IN_W][FP32_PER_REG]) {
   for(int yy = 0; yy < TILE_IN_H; ++yy) {
     for(int xx = 0; xx < TILE_IN_W; ++xx) {
-      float* pos = u_arr + k * TILE_IN_H * TILE_IN_W * C + yy * TILE_IN_W * C + xx * C + c;
-      svst1_f32(svptrue_b32(), &U[yy][xx][0], svld1(svptrue_b32(), pos));
+      float* pos = U + k * TILE_IN_H * TILE_IN_W * C + yy * TILE_IN_W * C + xx * C + c;
+      svst1_f32(svptrue_b32(), &u[yy][xx][0], svld1(svptrue_b32(), pos));
     }
   }
 }
 
-ALWAYS_INLINE void dest_tranform_sve(float M[TILE_IN_H][TILE_IN_W][FP32_PER_REG], int K, int kk, float Y[TILE_OUT_H][TILE_IN_W][FP32_PER_REG]) {
+ALWAYS_INLINE void destTransformSVE(float M[TILE_IN_H][TILE_IN_W][FP32_PER_REG], int K, int kk, float Y[TILE_OUT_H][TILE_IN_W][FP32_PER_REG]) {
   DECLARE_SVE_FP32_REGS()
   z22 = svdup_f32( -8.0f );
   z23 = svdup_f32(  8.0f );
@@ -456,24 +447,22 @@ ALWAYS_INLINE void dest_tranform_sve(float M[TILE_IN_H][TILE_IN_W][FP32_PER_REG]
   }
 }
 
-ALWAYS_INLINE void dest_store(float Y[TILE_OUT_H][TILE_IN_W][FP32_PER_REG], float* __restrict__ out, int K, int outHeight, int outWidth, int n, int kk, int y, int x) {
+ALWAYS_INLINE void destStore(float Y[TILE_OUT_H][TILE_IN_W][FP32_PER_REG], float* __restrict__ out, OutShape os, int tileNo, TileShape ts, int kk) {
+  int K = os.oc, outHeight = os.h, outWidth = os.w;
+  TileIndex ti = getTileIndex(tileNo, ts);
+  int n = ti.b, x = ti.tw, y = ti.th;
   for(int k = kk; k < kk + MIN(FP32_PER_REG, K - kk); ++k)
     for(int yy = 0; yy < TILE_OUT_H; ++yy)
       for(int xx = 0; xx < TILE_OUT_W; ++xx)
         out[(long)((n * K + k) * outHeight + y * 4 + yy) * outWidth + x * 4 + xx] = Y[yy][xx][k - kk];
 }
 
-ALWAYS_INLINE void hadamard_product(float U[TILE_IN_H][TILE_IN_W][FP32_PER_REG],
-                                    float V[TILE_IN_H][TILE_IN_W][FP32_PER_REG],
-                                    int kk, int k,
-                                    int C, int c,
-                                    float M[TILE_IN_H][TILE_IN_W][FP32_PER_REG]
-                                    ) {
+ALWAYS_INLINE void hadamardProduct(float U[TILE_IN_H][TILE_IN_W][FP32_PER_REG], float* V, VShape vs, int tileNo, int kk, int k,int C, int c, float M[TILE_IN_H][TILE_IN_W][FP32_PER_REG]) {
   for(int yy = 0; yy < TILE_IN_H; ++yy) {
     for(int xx = 0; xx < TILE_IN_W; ++xx) {
       DECLARE_SVE_FP32_REGS()
       svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C-c));
-      z0 = svld1(pg, &V[yy][xx][0]);
+      z0 = svld1(pg, V + tileNo * TILE_IN_H * TILE_IN_W * C + yy * TILE_IN_W * C + xx * C + c);
       z1 = svld1(pg, &U[yy][xx][0]);
       z3 = svmul_f32_x(pg, z0, z1);
       M[yy][xx][k - kk] += svaddv_f32(pg, z3); //reduce
@@ -488,82 +477,68 @@ ALWAYS_INLINE void hadamard_product(float U[TILE_IN_H][TILE_IN_W][FP32_PER_REG],
 void winconv_2x3(float *__restrict__ image, const int inHeight,
                  const int inWidth, const int C, float *__restrict__ filter,
                  const int K, const int N, float *__restrict__ out,
-                 float *__restrict__ U, float *__restrict__ V,
+                 float *__restrict__ U_no_use, float *__restrict__ V_no_use,
                  float *__restrict__ M) {
 
-  // m = 4; r = 3; alpha = 4
-  const int outHeight = inHeight - 2;
-  const int outWidth = inWidth - 2;
-  const long sizeI = inHeight * inWidth;
-  const int sizeF = 3 * 3;
-  const int sizeO = outHeight * outWidth;
-  int outgap[3] = {
-      K * (inHeight - 2) * (inWidth - 2), 
-      (inHeight - 2) * (inWidth - 2), 
-      (inWidth - 2)
-    };
+  /* new vars of shape */
+  ImgShape is = {N, C, inHeight, inWidth};
+  FltShape fs = {K, C, FLT_H, FLT_W};
+  OutShape os = getOutShape(is, fs);
+  TileShape ts = getTileShape(is, os);
+  UShape us = getUShape(fs);
+  VShape vs = getVShape(is, ts);
+
+  int outgap[3] = {os.oc * os.h * os.w,  os.h * os.w,  os.w};
   #pragma omp parallel for simd aligned(out) schedule(static)
   for(int i = 0; i < N * outgap[0]; ++i) out[i] = 0;
 
-  float* u_arr      =  (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * K * 6 * 6 * C);     
-  assert(u_arr != NULL);
-  float* filer_KHWC =  (float*) aligned_alloc(ALLOC_ALIGNMENT, K * C * 3 * 3 * sizeof(float));
-  assert(filer_KHWC != NULL);
-  float* image_NHWC =  (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * N * C * inHeight * inWidth);
-  assert(image_NHWC != NULL);
-  float* v_arr      =  (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * N * (outHeight / 4) * (outWidth / 4) * ROUND_UP(C, FP32_PER_REG) * 6 * 6 * FP32_PER_REG);
-  assert(v_arr != NULL);
+  float* filerPacked =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, K * C * 3 * 3 * sizeof(float));
+  assert(filerPacked != NULL);
+  float* imagePacked =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * N * C * inHeight * inWidth);
+  assert(imagePacked != NULL);
+  float* V = (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * vs.numTileTotal  * 6 * 6 * C);
+  assert(V != NULL);
+  float* U = (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * K * 6 * 6 * C);
+  assert(U != NULL);
 
-  filter_KCHW_to_KHWC(filter, K, C, filer_KHWC);
-  filter_transform_all(filer_KHWC, K, C, u_arr);
-  Image_NCHW_to_NHWC(image, N, C, inHeight, inWidth, image_NHWC);
+  filterIcPack(filter, fs, filerPacked);
+  filterTransform(filerPacked, fs, U);
+  ImageIcPack(image, is, imagePacked);
 
-  float (*V_tensor)[(outHeight / 4)][(outWidth / 4)][DIVIDE_UP(C, FP32_PER_REG)][6][6][FP32_PER_REG]
-        = (float (*)[(outHeight / 4)][(outWidth / 4)][DIVIDE_UP(C, FP32_PER_REG)][6][6][FP32_PER_REG]) v_arr;
-
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(3)
-  for (int n = 0; n < N; ++n) {
-    for (int y = 0; y < outHeight / 4; ++y) {
-      for (int x = 0; x < outWidth / 4; ++x) {
-        for (int c = 0; c < C; c += FP32_PER_REG) {
-         src_transform_sve(image_NHWC, C, inHeight, inWidth, n, c, y, x, V_tensor[n][y][x][c/FP32_PER_REG]);
-        }
-      }
+  PRAGMA_OMP_PARALLEL_FOR()
+  for (int tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
+    for (int c = 0; c < C; c += FP32_PER_REG) {
+      srcTransformSVE(imagePacked, is, tileNo, c, V, vs, ts);
     }
   }
   
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(3)
+  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
   for (int kk = 0; kk < K; kk += FP32_PER_REG) {
-    for (int n = 0; n < N; ++n) {
-      for (int y = 0; y < outHeight / 4; ++y) {
-        for (int x = 0; x < outWidth / 4; ++x) {
-          
-          float M[6][6][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
-          memset(M, 0, sizeof M);
-          float Y[4][6][FP32_PER_REG]   ATTRIBUTE_ALIGN(128);
+    for (int tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
 
-          for(int k = kk; k < kk + MIN(FP32_PER_REG, K - kk); ++k) {
-            for (int c = 0; c < C; c += FP32_PER_REG) {
-              // B_T * d
-              float U[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
-              // float V[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
-              copy_filter(u_arr, C, k, c, U);
-              // 这里有重复运算K次
-              // src_transform_sve(...);
-              hadamard_product(U, V_tensor[n][y][x][c/FP32_PER_REG], kk, k, C, c, M);
-            }
-          }
-          dest_tranform_sve(M, K, kk, Y);
-          dest_store(Y, out, K, outHeight, outWidth, n, kk, y, x);
+      float M[6][6][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
+      memset(M, 0, sizeof M);
+      float Y[4][6][FP32_PER_REG]   ATTRIBUTE_ALIGN(128);
+
+      for(int k = kk; k < kk + MIN(FP32_PER_REG, K - kk); ++k) {
+        for (int c = 0; c < C; c += FP32_PER_REG) {
+          float u[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
+          copyFilter(U, C, k, c, u);
+          // hadamardProduct(u, V_tensor[n][y][x][c/FP32_PER_REG], kk, k, C, c, M);
+          hadamardProduct(u, V, vs, tileNo, kk, k, C, c, M);
         }
       }
+
+      destTransformSVE(M, K, kk, Y);
+      destStore(Y, out, os, tileNo, ts, kk);
     }
   }
 
-  // 边界处理
-  boundary_treatment(image_NHWC, inHeight, inWidth, C, filer_KHWC, K, N, out);
 
-  free(u_arr);
-  free(image_NHWC);
-  free(filer_KHWC);
+  // 边界处理
+  boundaryTreatment(imagePacked, is,  filerPacked, fs, out);
+
+  free(U);
+  free(imagePacked);
+  free(filerPacked);
 }
