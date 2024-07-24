@@ -4,7 +4,7 @@
 #include <string.h>
 #include <arm_sve.h>
 #include "common.h"
-ALWAYS_INLINE void boundaryTreatment(float *__restrict__ packedImage, ImgShape is, float *__restrict__ packedFilter, FltShape fs, float *__restrict__ out) {
+ALWAYS_INLINE void applyBoundaryTreatment(float *__restrict__ packedImage, ImgShape is, float *__restrict__ packedFilter, FltShape fs, float *__restrict__ out) {
   int N = is.numImg, C = is.ic, H = is.h, W = is.w, K = fs.oc;
   long inpos, knpos, outpos;
   int dimIn[4] = {N, H, W, C};
@@ -470,19 +470,19 @@ ALWAYS_INLINE void hadamardProduct(float U[TILE_IN_H][TILE_IN_W][FP32_PER_REG], 
   }
 }
 
-// User API for winograd F(2,3)
+// User API for winograd F(24,3)
 // image: [batch * C * inHeight * inWidth]
 // filter: [K * C * 3 * 3]
 // result: [batch * K * outHeight * outWidth]
 void winconv_2x3(float *__restrict__ image, const int inHeight,
-                 const int inWidth, const int C, float *__restrict__ filter,
-                 const int K, const int N, float *__restrict__ out,
+                 const int inWidth, const int numInChannel, float *__restrict__ filter,
+                 const int numOutChannel, const int numBatch, float *__restrict__ out,
                  float *__restrict__ U_no_use, float *__restrict__ V_no_use,
-                 float *__restrict__ M) {
+                 float *__restrict__ M_no_use) {
 
   /* new vars of shape */
-  ImgShape is = {N, C, inHeight, inWidth};
-  FltShape fs = {K, C, FLT_H, FLT_W};
+  ImgShape is = {numBatch, numInChannel, inHeight, inWidth};
+  FltShape fs = {numOutChannel, numInChannel, FLT_H, FLT_W};
   OutShape os = getOutShape(is, fs);
   TileShape ts = getTileShape(is, os);
   UShape us = getUShape(fs);
@@ -490,52 +490,65 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
 
   int outgap[3] = {os.oc * os.h * os.w,  os.h * os.w,  os.w};
   #pragma omp parallel for simd aligned(out) schedule(static)
-  for(int i = 0; i < N * outgap[0]; ++i) out[i] = 0;
+  for(int i = 0; i < numBatch * outgap[0]; ++i) out[i] = 0;
 
-  float* filerPacked =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, K * C * 3 * 3 * sizeof(float));
+  float* filerPacked =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, numOutChannel * numInChannel * 3 * 3 * sizeof(float));
   assert(filerPacked != NULL);
-  float* imagePacked =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * N * C * inHeight * inWidth);
+  float* imagePacked =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * numBatch * numInChannel * inHeight * inWidth);
   assert(imagePacked != NULL);
-  float* V = (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * vs.numTileTotal  * 6 * 6 * C);
+  float* V = (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * vs.numTileTotal  * 6 * 6 * numInChannel);
   assert(V != NULL);
-  float* U = (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * K * 6 * 6 * C);
+  float* U = (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * numOutChannel * 6 * 6 * numInChannel);
   assert(U != NULL);
 
   filterIcPack(filter, fs, filerPacked);
-  filterTransform(filerPacked, fs, U);
   ImageIcPack(image, is, imagePacked);
 
+  /**
+   * Transforms the filter using the Winograd algorithm.
+   *
+   * @param filerPacked The packed filter matrix(as input).
+   * @param fs The filter size.
+   * @param U The transformed filter matrix(as output), dimensions: [numOutChannel, 6, 6, numInChannel].
+   */
+  filterTransform(filerPacked, fs, U);
+  
+  /**
+   * Applies the Winograd transformation to the source image in parallel.
+   *
+   * @param V The output tensor, dimensions: [numTileTotal, 6, 6, numInChannel]. 
+   * @param vs The output tensor shape.
+   * @param tileNo The tile is NO.tileNo.
+   * @param ts The tile shape.
+   * @param numInChannel The number of input channels.
+   */
   PRAGMA_OMP_PARALLEL_FOR()
   for (int tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
-    for (int c = 0; c < C; c += FP32_PER_REG) {
+    for (int c = 0; c < numInChannel; c += FP32_PER_REG) {
       srcTransformSVE(imagePacked, is, V, vs, tileNo, ts, c);
     }
   }
-  
+
+
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for (int kk = 0; kk < K; kk += FP32_PER_REG) {
-    for (int tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
+  for(int ocBlockStart = 0; ocBlockStart < numOutChannel; ocBlockStart +=  outputChannelBlockSize) {
+    for(int tileBlockStart = 0; tileBlockStart < ts.numTileTotal; tileBlockStart += tileBlockSize) {
+      Interval outputChannelBlock = newIntervalWithUpperBound(ocBlockStart, outputChannelBlockSize, numOutChannel);
+      Interval tileBlock = newIntervalWithUpperBound(tileBlockStart, tileBlockSize, ts.numTileTotal);
 
-      float M[6][6][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
-      memset(M, 0, sizeof M);
-      float Y[4][6][FP32_PER_REG]   ATTRIBUTE_ALIGN(128);
-
-      for(int k = kk; k < kk + MIN(FP32_PER_REG, K - kk); ++k) {
-        for (int c = 0; c < C; c += FP32_PER_REG) {
-          float u[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
-          copyFilter(U, C, k, c, u);
-          hadamardProduct(u, V, vs, tileNo, kk, k, C, c, M);
-        }
-      }
-
-      destTransformSVE(M, K, kk, Y);
-      destStore(Y, out, os, tileNo, ts, kk);
     }
   }
 
-
-  // 边界处理
-  boundaryTreatment(imagePacked, is,  filerPacked, fs, out);
+  /**
+   * Applies boundary treatment to the given image and filters, and stores the result in the output.
+   *
+   * @param imagePacked The packed image tensor.
+   * @param is The size of the input image.
+   * @param filerPacked The packed filter tensor.
+   * @param fs The size of the filter.
+   * @param out The output tensor to store the result.
+   */
+  applyBoundaryTreatment(imagePacked, is, filerPacked, fs, out);
 
   free(U);
   free(imagePacked);

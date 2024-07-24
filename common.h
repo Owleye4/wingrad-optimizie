@@ -106,8 +106,8 @@ ALWAYS_INLINE double timestamp() {
 double times_ms[10];
 double start_time;
 
-const int k_blk_size = 64;
-const int c_blk_size = 32;
+// const int k_blk_size = 64;
+// const int c_blk_size = 32;
 
 typedef struct {
   int b;
@@ -206,3 +206,33 @@ TileIndex getTileIndex(int tileNo, TileShape ts) {
   ti.tw = tileNo % ts.w;
   return ti;
 }
+
+
+typedef struct {   // Interval which is [start, end)
+  int start;
+  int end;
+	int len;
+} Interval;
+
+
+Interval newInterval(int start, int end) {
+	Interval it;
+	it.start = start;
+	it.end = end;
+	it.len = end - start;
+  return it;
+}
+
+Interval newIntervalWithUpperBound(int start, int step, int upperBound) {
+	Interval it;
+	it.start = start;
+	it.end = MIN(start + step, upperBound);
+  it.len = it.end - it.start;
+  return it;
+}
+
+/* Parameters */
+
+const int outputChannelBlockSize = 64;
+const int inputChannelBlockSize = 32;
+const int tileBlockSize = 28;
