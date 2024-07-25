@@ -1,4 +1,4 @@
-KBLAS_LIB_DIR = /shareofs/apps/libs/kml/2.2.0-bisheng3.2.0/lib/kblas/omp
+KBLAS_LIB_DIR = /shareofs/apps/libs/kml/2.2.0-bisheng3.2.0/lib/kblas/locking
 KBLAS_INCLUDE_DIR = /shareofs/apps/libs/kml/2.2.0-bisheng3.2.0/include
 
 all:
