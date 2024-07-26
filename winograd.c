@@ -267,7 +267,7 @@ ALWAYS_INLINE void tileIcPackedSrcTransformSVE(float* __restrict__ packedImage, 
   }
 }
 
-ALWAYS_INLINE void srcTransformSVE(float* __restrict__ packedImage, ImgShape is,  float* V, VShape vs, int tileNo, TileShape ts, int c) {
+ALWAYS_INLINE void srcPaddingAndTransformSVE(float* __restrict__ packedImage, ImgShape is,  float* V, VShape vs, int tileNo, TileShape ts, int c) {
   TileIndex ti = getTileIndex(tileNo, ts);
   int n = ti.b, x = ti.tw, y = ti.th;
   int inHeight = is.h, inWidth = is.w, C = is.ic;
@@ -283,50 +283,57 @@ ALWAYS_INLINE void srcTransformSVE(float* __restrict__ packedImage, ImgShape is,
   z30 = svdup_f32(  5.0f );
   z31 = svdup_f32( -5.0f );
   float tmp[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
+  memset((void*) tmp, 0, sizeof(tmp));
   svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C-c));
 
   float (*Varr) [TILE_IN_W][C] = (float (*)[TILE_IN_W][C]) (V + tileNo * TILE_IN_H * TILE_IN_W * C);
 
-  for (int xx = 0; xx < TILE_IN_W; ++xx) {   // 按列产生结果。
-    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 0) * inWidth * C + (x * 4 + xx) * C + c);
+  for (int xx = 0; xx < TILE_IN_W && (x * 4 + xx) < inWidth; ++xx) {   // 按列产生结果。
+    if((y * 4 + 0) < inHeight){
+      z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 0) * inWidth * C + (x * 4 + xx) * C + c);
+      z0 = svmul_f32_x(pg, z28, z6);
+    }
 
-    z0 = svmul_f32_x(pg, z28, z6);
+    if((y * 4 + 1) < inHeight) {
+      z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 1) * inWidth * C + (x * 4 + xx) * C + c);
+      z1 = svmul_f32_x(pg, z29, z6);
+      z2 = svmul_f32_x(pg, z28, z6);
+      z3 = svmul_f32_x(pg, z27, z6);
+      z4 = svmul_f32_x(pg, z26, z6);
+      z5 = svmul_f32_x(pg, z28, z6);
+    }
 
-    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 1) * inWidth * C + (x * 4 + xx) * C + c);
+    if((y * 4 + 2) < inHeight) {
+      z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 2) * inWidth * C + (x * 4 + xx) * C + c);
+      z0 = svmla_f32_x(pg, z0, z31, z6);
+      z1 = svmla_f32_x(pg, z1, z29, z6);
+      z2 = svmla_f32_x(pg, z2, z29, z6);
+      z3 = svmla_f32_x(pg, z3, z25, z6);
+      z4 = svmla_f32_x(pg, z4, z25, z6);
+    }
 
-    z1 = svmul_f32_x(pg, z29, z6);
-    z2 = svmul_f32_x(pg, z28, z6);
-    z3 = svmul_f32_x(pg, z27, z6);
-    z4 = svmul_f32_x(pg, z26, z6);
-    z5 = svmul_f32_x(pg, z28, z6);
+    if((y * 4 + 3) < inHeight) {
+      z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 3) * inWidth * C + (x * 4 + xx) * C + c);
+      z1 = svmla_f32_x(pg, z1, z24, z6);
+      z2 = svmla_f32_x(pg, z2, z25, z6);
+      z3 = svmla_f32_x(pg, z3, z26, z6);
+      z4 = svmla_f32_x(pg, z4, z27, z6);
+      z5 = svmla_f32_x(pg, z5, z31, z6);
+    }
 
-    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 2) * inWidth * C + (x * 4 + xx) * C + c);
+    if((y * 4 + 4) < inHeight) {
+      z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 4) * inWidth * C + (x * 4 + xx) * C + c);
+      z0 = svmla_f32_x(pg, z0, z24, z6);
+      z1 = svmla_f32_x(pg, z1, z24, z6);
+      z2 = svmla_f32_x(pg, z2, z24, z6);
+      z3 = svmla_f32_x(pg, z3, z24, z6);
+      z4 = svmla_f32_x(pg, z4, z24, z6);
+    }
 
-    z0 = svmla_f32_x(pg, z0, z31, z6);
-    z1 = svmla_f32_x(pg, z1, z29, z6);
-    z2 = svmla_f32_x(pg, z2, z29, z6);
-    z3 = svmla_f32_x(pg, z3, z25, z6);
-    z4 = svmla_f32_x(pg, z4, z25, z6);
-
-    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 3) * inWidth * C + (x * 4 + xx) * C + c);
-
-    z1 = svmla_f32_x(pg, z1, z24, z6);
-    z2 = svmla_f32_x(pg, z2, z25, z6);
-    z3 = svmla_f32_x(pg, z3, z26, z6);
-    z4 = svmla_f32_x(pg, z4, z27, z6);
-    z5 = svmla_f32_x(pg, z5, z31, z6);
-
-    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 4) * inWidth * C + (x * 4 + xx) * C + c);
-    
-    z0 = svmla_f32_x(pg, z0, z24, z6);
-    z1 = svmla_f32_x(pg, z1, z24, z6);
-    z2 = svmla_f32_x(pg, z2, z24, z6);
-    z3 = svmla_f32_x(pg, z3, z24, z6);
-    z4 = svmla_f32_x(pg, z4, z24, z6);
-
-    z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 5) * inWidth * C + (x * 4 + xx) * C + c);
-
-    z5 = svmla_f32_x(pg, z5, z24, z6);
+    if((y * 4 + 5) < inHeight) {
+      z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 5) * inWidth * C + (x * 4 + xx) * C + c);
+      z5 = svmla_f32_x(pg, z5, z24, z6);
+    }
 
     svst1_f32(pg, tmp[0][xx], z0);
     svst1_f32(pg, tmp[1][xx], z1);
@@ -564,7 +571,7 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   PRAGMA_OMP_PARALLEL_FOR()
   for (int tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
     for (int c = 0; c < numInChannel; c += FP32_PER_REG) {
-      srcTransformSVE(imagePacked, is, V, vs, tileNo, ts, c);
+      srcPaddingAndTransformSVE(imagePacked, is, V, vs, tileNo, ts, c);
     }
   }
 

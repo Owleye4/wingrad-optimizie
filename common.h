@@ -168,8 +168,8 @@ OutShape getOutShape(ImgShape is, FltShape fs) {
 
 TileShape getTileShape(ImgShape is, OutShape os) {
   TileShape ts;
-  ts.h = DIV(os.h, TILE_OUT_H);
-  ts.w = DIV(os.w, TILE_OUT_W);
+  ts.h = DIV_UP(os.h, TILE_OUT_H);
+  ts.w = DIV_UP(os.w, TILE_OUT_W);
   ts.numImg = is.numImg;
   ts.numTilePerImg = ts.h * ts.w;
   ts.numTileTotal = ts.numTilePerImg * ts.numImg;
