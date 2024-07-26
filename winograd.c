@@ -7,7 +7,7 @@
 #include "kblas.h"
 ALWAYS_INLINE void filterIcPack(float* __restrict__ filter, FltShape fs, float* __restrict__ packedFiler) {
   int K = fs.oc, C = fs.ic;
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)            // 注意「伪共享」
+  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(3)
   for(int k = 0; k < K; ++k)
     for(int h = 0; h < FLT_HW; ++h)
       for(int w = 0; w < FLT_HW; ++w)
@@ -21,8 +21,8 @@ ALWAYS_INLINE void ImageIcPack(float* __restrict__ Image, ImgShape is,  float* _
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
   for(int n = 0; n < N; ++n)
     for(int h = 0; h < H; ++h)
-      for(int w = 0; w < W; ++w)
-        for(int c = 0; c < C; ++c)
+      for(int c = 0; c < C; ++c)
+        for(int w = 0; w < W; ++w)
           packedImage[n * H * W * C + h * W * C + w * C + c] 
                     = Image[n * C * H * W + c * H * W + h * W + w];
 }
@@ -395,7 +395,7 @@ ALWAYS_INLINE void srcPaddingAndTransformSVE(float* __restrict__ packedImage, Im
 
 ALWAYS_INLINE void filterTransform(float* __restrict__ packedFilter, float* __restrict__ U, UShape us) {
   int K = us.oc, C = us.ic;
-  PRAGMA_OMP_PARALLEL_FOR()
+  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
   for (int k = 0; k < K; ++k) {
     for(int c = 0; c < C; c += FP32_PER_REG) {
       filterTransformSVE(packedFilter + k * FLT_H * FLT_W * C, U + k * TILE_IN_H * TILE_IN_W * C, us, C, c);
@@ -568,7 +568,7 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
 
   filterTransform(filerPacked, U, us);
 
-  PRAGMA_OMP_PARALLEL_FOR()
+  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
   for (int tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
     for (int c = 0; c < numInChannel; c += FP32_PER_REG) {
       srcPaddingAndTransformSVE(imagePacked, is, V, vs, tileNo, ts, c);
