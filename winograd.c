@@ -577,7 +577,6 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
       float Y[TILE_OUT_H *  TILE_IN_W][RangeOC.len][RangeTile.len] ATTRIBUTE_ALIGN(128);
       for(int icBlockStart = 0; icBlockStart < numInChannel; icBlockStart += inputChannelBlockSize) {
         Interval RangeIC = newIntervalWithUpperBound(icBlockStart, inputChannelBlockSize, numInChannel);
-        float* u = U + RangeOC.start * 6 * 6 * numInChannel + RangeIC.start * 6 * 6;
         for(int i = 0; i < TILE_IN_H * TILE_IN_W; ++i) {
           cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, 
                       RangeOC.len, RangeTile.len, RangeIC.len, 1.0f, 
