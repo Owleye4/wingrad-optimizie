@@ -56,10 +56,6 @@
 #define MIN(A, B) (((A) < (B)) ? (A) : (B))
 #define MAX(A, B) (((A) > (B)) ? (A) : (B))
 
-#define FLT_HW 3
-#define FLT_H 3
-#define FLT_W 3
-
 #define FLT_H 3
 #define FLT_W 3
 #define FLT_HW 3

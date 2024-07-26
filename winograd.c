@@ -391,7 +391,7 @@ ALWAYS_INLINE void filterTransform(float* __restrict__ packedFilter, float* __re
   PRAGMA_OMP_PARALLEL_FOR()
   for (int k = 0; k < K; ++k) {
     for(int c = 0; c < C; c += FP32_PER_REG) {
-      filterTransformSVE(packedFilter, U + k * FLT_H * FLT_W * C, us, C, c);
+      filterTransformSVE(packedFilter + k * FLT_H * FLT_W * C, U + k * TILE_IN_H * TILE_IN_W * C, us, C, c);
     }
   }
 }
