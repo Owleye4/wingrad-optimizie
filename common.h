@@ -230,5 +230,5 @@ Interval newIntervalWithUpperBound(int64_t start, int64_t step, int64_t upperBou
 /* Parameters */
 
 const int64_t outputChannelBlockSize = 64;
-const int64_t inputChannelBlockSize = 32;
-const int64_t tileBlockSize = 28;
+const int64_t inputChannelBlockSize = 64;
+const int64_t tileBlockSize = 18;
