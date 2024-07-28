@@ -6,53 +6,53 @@
 #include "common.h"
 #include "kblas.h"
 ALWAYS_INLINE void filterIcPack(float* __restrict__ filter, FltShape fs, float* __restrict__ packedFiler) {
-  int K = fs.oc, C = fs.ic;
+  int64_t K = fs.oc, C = fs.ic;
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(3)
-  for(int k = 0; k < K; ++k)
-    for(int h = 0; h < FLT_HW; ++h)
-      for(int w = 0; w < FLT_HW; ++w)
-        for(int c = 0; c < C; ++c)
+  for(int64_t k = 0; k < K; ++k)
+    for(int64_t h = 0; h < FLT_HW; ++h)
+      for(int64_t w = 0; w < FLT_HW; ++w)
+        for(int64_t c = 0; c < C; ++c)
           packedFiler[k * 3 * 3 * C + h * 3 * C + w * C + c] 
                     = filter[k * C * 3 * 3 + c * 3 * 3 + h * 3 + w];
 }
 
 ALWAYS_INLINE void ImageIcPack(float* __restrict__ Image, ImgShape is,  float* __restrict__ packedImage) {
-  int N = is.numImg, C = is.ic, H = is.h, W = is.w;
+  int64_t N = is.numImg, C = is.ic, H = is.h, W = is.w;
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for(int n = 0; n < N; ++n)
-    for(int h = 0; h < H; ++h)
-      for(int c = 0; c < C; ++c)
-        for(int w = 0; w < W; ++w)
+  for(int64_t n = 0; n < N; ++n)
+    for(int64_t h = 0; h < H; ++h)
+      for(int64_t c = 0; c < C; ++c)
+        for(int64_t w = 0; w < W; ++w)
           packedImage[n * H * W * C + h * W * C + w * C + c] 
                     = Image[n * C * H * W + c * H * W + h * W + w];
 }
 
 ALWAYS_INLINE void filterOcIcPack(float* __restrict__ filter, FltShape fs, float* __restrict__ packedFiler) {
-  int outChannel = fs.oc, inChannel = fs.ic;
+  int64_t outChannel = fs.oc, inChannel = fs.ic;
   typedef float (*packedFilerTensor_t) [FLT_W][outChannel][inChannel];
   typedef float (*filterTensor_t) [inChannel][FLT_H][FLT_W];
   packedFilerTensor_t packedFilerTensor = (packedFilerTensor_t) packedFiler;
   filterTensor_t filterTensor = (filterTensor_t) filter;
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for(int k = 0; k < outChannel; ++k)
-    for(int h = 0; h < FLT_HW; ++h)
-      for(int w = 0; w < FLT_HW; ++w)
-        for(int c = 0; c < inChannel; ++c) {
+  for(int64_t k = 0; k < outChannel; ++k)
+    for(int64_t h = 0; h < FLT_HW; ++h)
+      for(int64_t w = 0; w < FLT_HW; ++w)
+        for(int64_t c = 0; c < inChannel; ++c) {
           packedFilerTensor[h][w][k][c] = filterTensor[k][c][h][w];
         }
 }
 
 ALWAYS_INLINE void ImageTileIcPack(float* __restrict__ image, ImgShape is,  float* __restrict__ packedImage,  TileShape ts) {
-  int batchSize = is.numImg, inputChannels = is.ic, imgHeight = is.h, imgWidth = is.w, numTileTotal = ts.numTileTotal;
+  int64_t batchSize = is.numImg, inputChannels = is.ic, imgHeight = is.h, imgWidth = is.w, numTileTotal = ts.numTileTotal;
   typedef float (*ImgTensor_t) [inputChannels][imgHeight][imgWidth];
   typedef float (*packedImgTensor_t) [TILE_IN_W][numTileTotal][inputChannels];
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for(int tile = 0; tile < numTileTotal; ++tile)
-    for(int ic = 0; ic < inputChannels; ++ic)
-      for(int h = 0; h < TILE_IN_H; ++h)
-        for(int w = 0; w < TILE_IN_W; ++w) {
+  for(int64_t tile = 0; tile < numTileTotal; ++tile)
+    for(int64_t ic = 0; ic < inputChannels; ++ic)
+      for(int64_t h = 0; h < TILE_IN_H; ++h)
+        for(int64_t w = 0; w < TILE_IN_W; ++w) {
           TileIndex ti = getTileIndex(tile, ts);
-          int b = ti.b, x = ti.tw, y = ti.th;
+          int64_t b = ti.b, x = ti.tw, y = ti.th;
           packedImgTensor_t packedImgTensor = (packedImgTensor_t) packedImage;
           ImgTensor_t imgTensor = (ImgTensor_t) image;
           if(y * 4 + h < imgHeight && x * 4 + w < imgWidth)
@@ -62,7 +62,7 @@ ALWAYS_INLINE void ImageTileIcPack(float* __restrict__ image, ImgShape is,  floa
         }
 }
 
-ALWAYS_INLINE void filterTransformSVE(float* __restrict__ packedFilter, float* __restrict__ U, UShape us, int simdDimSize, int simdDimIndex) {
+ALWAYS_INLINE void filterTransformSVE(float* __restrict__ packedFilter, float* __restrict__ U, UShape us, int64_t simdDimSize, int64_t simdDimIndex) {
   // float* filter_ptr = packedFilter + k * 3 * 3 * C;
   // float* u_arr_ptr = U + k * 6 * 6 * C;
   typedef float (*packedFilterTensor_t) [FLT_W][simdDimSize];
@@ -78,9 +78,9 @@ ALWAYS_INLINE void filterTransformSVE(float* __restrict__ packedFilter, float* _
   z29 = svdup_f32(  1.0f / 6.0f  );
   z30 = svdup_f32(  1.0f / 12.0f );
   z31 = svdup_f32(  1.0f / 24.0f  );
-  svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, simdDimSize-simdDimIndex));
+  svbool_t pg = svwhilelt_b32(0L, MIN(FP32_PER_REG, simdDimSize-simdDimIndex));
   // G * filter
-  for (int i = 0; i < FLT_HW; ++i) {     // 这个循环按row遍历filter（按G以及结果的column）， 按列产生结果。
+  for (int64_t i = 0; i < FLT_HW; ++i) {     // 这个循环按row遍历filter（按G以及结果的column）， 按列产生结果。
     z6 = svld1(pg, &packedFilterTensor[0][i][simdDimIndex]);
 
     z0 = svmul_f32_x(pg, z28, z6);
@@ -114,7 +114,7 @@ ALWAYS_INLINE void filterTransformSVE(float* __restrict__ packedFilter, float* _
     svst1_f32(pg, tmp[5][i], z5);
   }
   // (G * filter) * G_T
-  for (int i = 0; i < TILE_IN_H; ++i) {    // 这个循环按row遍历(G * filter)（按G_T的column遍历），按行产生结果。
+  for (int64_t i = 0; i < TILE_IN_H; ++i) {    // 这个循环按row遍历(G * filter)（按G_T的column遍历），按行产生结果。
     z6 = svld1(pg, tmp[i][0]);
     
     z0 = svmul_f32_x(pg, z28, z6);
@@ -149,13 +149,13 @@ ALWAYS_INLINE void filterTransformSVE(float* __restrict__ packedFilter, float* _
   }
 }
 
-ALWAYS_INLINE void tileIcPackedSrcTransformSVE(float* __restrict__ packedImage, float* __restrict__ V, VShape vs, int simdDimSize, int simdDimIndex) {
-  int inputChannels = vs.ic, numTileTotal = vs.numTileTotal;
+ALWAYS_INLINE void tileIcPackedSrcTransformSVE(float* __restrict__ packedImage, float* __restrict__ V, VShape vs, int64_t simdDimSize, int64_t simdDimIndex) {
+  int64_t inputChannels = vs.ic, numTileTotal = vs.numTileTotal;
   typedef float(*VTensor_t)[TILE_IN_W][simdDimSize];
   typedef float(*packedImageTensor_t)[TILE_IN_W][simdDimSize];
   VTensor_t VTensor = (VTensor_t) V;
   packedImageTensor_t packedImageTensor = (packedImageTensor_t) packedImage;
-  svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, simdDimSize-simdDimIndex));
+  svbool_t pg = svwhilelt_b32(0L, MIN(FP32_PER_REG, simdDimSize-simdDimIndex));
   float tmp[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
   DECLARE_SVE_FP32_REGS();
   z22 = svdup_f32( -8.0f );
@@ -168,7 +168,7 @@ ALWAYS_INLINE void tileIcPackedSrcTransformSVE(float* __restrict__ packedImage, 
   z29 = svdup_f32( -4.0f );
   z30 = svdup_f32(  5.0f );
   z31 = svdup_f32( -5.0f );
-  for (int w = 0; w < TILE_IN_W; ++w) {   // 按列产生结果。
+  for (int64_t w = 0; w < TILE_IN_W; ++w) {   // 按列产生结果。
     z6 = svld1(pg, &packedImageTensor[0][w][simdDimIndex]);
 
     z0 = svmul_f32_x(pg, z28, z6);
@@ -217,7 +217,7 @@ ALWAYS_INLINE void tileIcPackedSrcTransformSVE(float* __restrict__ packedImage, 
     svst1_f32(pg, tmp[5][w], z5);
   }
 
-  for (int h = 0; h < TILE_IN_H; ++h) {   // 按行产生结果。
+  for (int64_t h = 0; h < TILE_IN_H; ++h) {   // 按行产生结果。
     z6 = svld1(pg, tmp[h][0]);
 
     z0 = svmul_f32_x(pg, z28, z6);
@@ -267,10 +267,10 @@ ALWAYS_INLINE void tileIcPackedSrcTransformSVE(float* __restrict__ packedImage, 
   }
 }
 
-ALWAYS_INLINE void srcPaddingAndTransformSVE(float* __restrict__ packedImage, ImgShape is,  float* V, VShape vs, int tileNo, TileShape ts, int c) {
+ALWAYS_INLINE void srcPaddingAndTransformSVE(float* __restrict__ packedImage, ImgShape is,  float* V, VShape vs, int64_t tileNo, TileShape ts, int64_t c) {
   TileIndex ti = getTileIndex(tileNo, ts);
-  int n = ti.b, x = ti.tw, y = ti.th;
-  int inHeight = is.h, inWidth = is.w, C = is.ic;
+  int64_t n = ti.b, x = ti.tw, y = ti.th;
+  int64_t inHeight = is.h, inWidth = is.w, C = is.ic;
   DECLARE_SVE_FP32_REGS();
   z22 = svdup_f32( -8.0f );
   z23 = svdup_f32(  8.0f );
@@ -284,11 +284,11 @@ ALWAYS_INLINE void srcPaddingAndTransformSVE(float* __restrict__ packedImage, Im
   z31 = svdup_f32( -5.0f );
   float tmp[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
   memset((void*) tmp, 0, sizeof(tmp));
-  svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, C-c));
+  svbool_t pg = svwhilelt_b32(0L, MIN(FP32_PER_REG, C-c));
 
   float (*Varr) [TILE_IN_W][C] = (float (*)[TILE_IN_W][C]) (V + tileNo * TILE_IN_H * TILE_IN_W * C);
 
-  for (int xx = 0; xx < TILE_IN_W && (x * 4 + xx) < inWidth; ++xx) {   // 按列产生结果。
+  for (int64_t xx = 0; xx < TILE_IN_W && (x * 4 + xx) < inWidth; ++xx) {   // 按列产生结果。
     if((y * 4 + 0) < inHeight){
       z6 = svld1(pg, packedImage + n * inHeight * inWidth * C + (y * 4 + 0) * inWidth * C + (x * 4 + xx) * C + c);
       z0 = svmul_f32_x(pg, z28, z6);
@@ -343,7 +343,7 @@ ALWAYS_INLINE void srcPaddingAndTransformSVE(float* __restrict__ packedImage, Im
     svst1_f32(pg, tmp[5][xx], z5);
   }
 
-  for (int yy = 0; yy < TILE_IN_H; ++yy) {   // 按行产生结果。
+  for (int64_t yy = 0; yy < TILE_IN_H; ++yy) {   // 按行产生结果。
     z6 = svld1(pg, tmp[yy][0]);
 
     z0 = svmul_f32_x(pg, z28, z6);
@@ -394,16 +394,16 @@ ALWAYS_INLINE void srcPaddingAndTransformSVE(float* __restrict__ packedImage, Im
 }
 
 ALWAYS_INLINE void filterTransform(float* __restrict__ packedFilter, float* __restrict__ U, UShape us) {
-  int K = us.oc, C = us.ic;
+  int64_t K = us.oc, C = us.ic;
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for (int k = 0; k < K; ++k) {
-    for(int c = 0; c < C; c += FP32_PER_REG) {
+  for (int64_t k = 0; k < K; ++k) {
+    for(int64_t c = 0; c < C; c += FP32_PER_REG) {
       filterTransformSVE(packedFilter + k * FLT_H * FLT_W * C, U + k * TILE_IN_H * TILE_IN_W * C, us, C, c);
     }
   }
 }
 
-ALWAYS_INLINE void destTransformSVE(float* __restrict__ M, float* __restrict__ Y, int simdDimSize, int simdDimIndex) {
+ALWAYS_INLINE void destTransformSVE(float* __restrict__ M, float* __restrict__ Y, int64_t simdDimSize, int64_t simdDimIndex) {
   
   typedef float (*MTensor_t)[TILE_IN_W][simdDimSize];
   typedef float (*YTensor_t)[TILE_IN_W][simdDimSize];
@@ -422,8 +422,8 @@ ALWAYS_INLINE void destTransformSVE(float* __restrict__ M, float* __restrict__ Y
   z29 = svdup_f32( -4.0f );
   z30 = svdup_f32(  5.0f );
   z31 = svdup_f32( -5.0f );
-  svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, simdDimSize - simdDimIndex));
-  for (int w = 0; w < TILE_IN_W; ++w) {   // 按列产生结果。
+  svbool_t pg = svwhilelt_b32(0L, MIN(FP32_PER_REG, simdDimSize - simdDimIndex));
+  for (int64_t w = 0; w < TILE_IN_W; ++w) {   // 按列产生结果。
     z4 = svld1(pg, &MTensor[0][w][simdDimIndex]);
     
     z0 = z4;
@@ -466,7 +466,7 @@ ALWAYS_INLINE void destTransformSVE(float* __restrict__ M, float* __restrict__ Y
     svst1_f32(pg, &YTensor[3][w][simdDimIndex], z3);
   }
 
-  for (int h = 0; h < TILE_OUT_HW; ++h) {   // 按行产生结果。
+  for (int64_t h = 0; h < TILE_OUT_HW; ++h) {   // 按行产生结果。
     z4 = svld1(pg, &YTensor[h][0][simdDimIndex]);
     
     z0 = z4;
@@ -510,8 +510,8 @@ ALWAYS_INLINE void destTransformSVE(float* __restrict__ M, float* __restrict__ Y
   }
 }
 
-ALWAYS_INLINE void destTransform(float* __restrict__ M, float* __restrict__ Y, int simdDimSize) {
-  for (int simdDimIndex = 0; simdDimIndex < simdDimSize; simdDimIndex += FP32_PER_REG)
+ALWAYS_INLINE void destTransform(float* __restrict__ M, float* __restrict__ Y, int64_t simdDimSize) {
+  for (int64_t simdDimIndex = 0; simdDimIndex < simdDimSize; simdDimIndex += FP32_PER_REG)
     destTransformSVE(M, Y, simdDimSize, simdDimIndex);
 }
 
@@ -520,20 +520,20 @@ ALWAYS_INLINE void destStore(float* __restrict__ Y, float* __restrict__ out, Out
   typedef float (*outTensor_t) [os.oc][os.h][os.w];
   YTensor_t YTensor = (YTensor_t) Y;
   outTensor_t outTensor = (outTensor_t) out;
-  for(int h = 0; h < TILE_OUT_H; ++h)
-    for(int w = 0; w < TILE_OUT_W; ++w)
-      for(int k = 0; k < RangeOC.len; ++k)
-        for(int b = 0; b < RangeTile.len; ++b) {
+  for(int64_t h = 0; h < TILE_OUT_H; ++h)
+    for(int64_t w = 0; w < TILE_OUT_W; ++w)
+      for(int64_t k = 0; k < RangeOC.len; ++k)
+        for(int64_t b = 0; b < RangeTile.len; ++b) {
           TileIndex ti = getTileIndex(RangeTile.start + b, ts);
-          int n = ti.b, x = ti.tw, y = ti.th;
+          int64_t n = ti.b, x = ti.tw, y = ti.th;
           if(y * 4 + h < os.h && x * 4 + w < os.w) 
             outTensor[n][RangeOC.start + k][y * 4 + h][x * 4 + w] = YTensor[h][w][k][b];
         }
 }
 
-void winconv_2x3(float *__restrict__ image, const int inHeight,
-                 const int inWidth, const int numInChannel, float *__restrict__ filter,
-                 const int numOutChannel, const int numBatch, float *__restrict__ out,
+void winconv_2x3(float *__restrict__ image, const int64_t inHeight,
+                 const int64_t inWidth, const int64_t numInChannel, float *__restrict__ filter,
+                 const int64_t numOutChannel, const int64_t numBatch, float *__restrict__ out,
                  float *__restrict__ U_no_use, float *__restrict__ V_no_use,
                  float *__restrict__ M_no_use) {
 
@@ -545,9 +545,9 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   UShape us = getUShape(fs);
   VShape vs = getVShape(is, ts);
   {
-    int l = os.oc * os.h * os.w * numBatch;
+    int64_t l = os.oc * os.h * os.w * numBatch;
     #pragma omp parallel for simd aligned(out) schedule(static)
-    for(int i = 0; i < l; ++i) out[i] = 0;
+    for(int64_t i = 0; i < l; ++i) out[i] = 0;
   }
   float* filerPacked =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, numOutChannel * numInChannel * 3 * 3 * sizeof(float));
   assert(filerPacked != NULL);
@@ -569,22 +569,22 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   filterTransform(filerPacked, U, us);
 
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for (int tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
-    for (int c = 0; c < numInChannel; c += FP32_PER_REG) {
+  for (int64_t tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
+    for (int64_t c = 0; c < numInChannel; c += FP32_PER_REG) {
       srcPaddingAndTransformSVE(imagePacked, is, V, vs, tileNo, ts, c);
     }
   }
 
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for(int ocBlockStart = 0; ocBlockStart < numOutChannel; ocBlockStart +=  outputChannelBlockSize) {
-    for(int tileBlockStart = 0; tileBlockStart < ts.numTileTotal; tileBlockStart += tileBlockSize) {
+  for(int64_t ocBlockStart = 0; ocBlockStart < numOutChannel; ocBlockStart +=  outputChannelBlockSize) {
+    for(int64_t tileBlockStart = 0; tileBlockStart < ts.numTileTotal; tileBlockStart += tileBlockSize) {
       Interval RangeOC = newIntervalWithUpperBound(ocBlockStart, outputChannelBlockSize, numOutChannel);
       Interval RangeTile = newIntervalWithUpperBound(tileBlockStart, tileBlockSize, ts.numTileTotal);
       float M[TILE_IN_H  *  TILE_IN_W][RangeOC.len][RangeTile.len] ATTRIBUTE_ALIGN(128); memset(M, 0, sizeof(M));
       float Y[TILE_OUT_H *  TILE_IN_W][RangeOC.len][RangeTile.len] ATTRIBUTE_ALIGN(128);
-      for(int icBlockStart = 0; icBlockStart < numInChannel; icBlockStart += inputChannelBlockSize) {
+      for(int64_t icBlockStart = 0; icBlockStart < numInChannel; icBlockStart += inputChannelBlockSize) {
         Interval RangeIC = newIntervalWithUpperBound(icBlockStart, inputChannelBlockSize, numInChannel);
-        for(int i = 0; i < TILE_IN_H * TILE_IN_W; ++i) {
+        for(int64_t i = 0; i < TILE_IN_H * TILE_IN_W; ++i) {
           cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, 
                       RangeOC.len, RangeTile.len, RangeIC.len, 1.0f, 
                       &UTensor[RangeOC.start][i/TILE_IN_W][i%TILE_IN_W][RangeIC.start], TILE_IN_H * TILE_IN_W * numInChannel, 

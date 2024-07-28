@@ -102,59 +102,59 @@ ALWAYS_INLINE double timestamp() {
 double times_ms[10];
 double start_time;
 
-// const int k_blk_size = 64;
-// const int c_blk_size = 32;
+// const int64_t k_blk_size = 64;
+// const int64_t c_blk_size = 32;
 
 typedef struct {
-  int b;
-  int th;
-  int tw;
+  int64_t b;
+  int64_t th;
+  int64_t tw;
 } TileIndex;
 
 
 // Tensors' shape, pass them when passing tensor as a pointer
 typedef struct {
-  int oc;	// number of output channels
-  int ic;   // number of input channels
-  int h;
-  int w;
+  int64_t oc;	// number of output channels
+  int64_t ic;   // number of input channels
+  int64_t h;
+  int64_t w;
 } FltShape;
 
 
 typedef struct {
-  int numImg;
-  int ic;   // number of input channels
-  int h;
-  int w;
+  int64_t numImg;
+  int64_t ic;   // number of input channels
+  int64_t h;
+  int64_t w;
 } ImgShape;
 
 typedef struct {
-  int oc;
-  int ic;   // number of input channels
-  int h;
-  int w;
+  int64_t oc;
+  int64_t ic;   // number of input channels
+  int64_t h;
+  int64_t w;
 } UShape;
 
 typedef struct {
-  int numTileTotal;
-  int ic;   // number of input channels
-  int h;
-  int w;
+  int64_t numTileTotal;
+  int64_t ic;   // number of input channels
+  int64_t h;
+  int64_t w;
 } VShape;
 
 typedef struct {
-  int numImg;
-  int oc;   // number of output channels
-  int h;
-  int w;
+  int64_t numImg;
+  int64_t oc;   // number of output channels
+  int64_t h;
+  int64_t w;
 } OutShape;
 
 typedef struct {
-  int numImg;   // number of output channels
-  int numTilePerImg;
-  int numTileTotal;
-  int h;
-  int w;
+  int64_t numImg;   // number of output channels
+  int64_t numTilePerImg;
+  int64_t numTileTotal;
+  int64_t h;
+  int64_t w;
 } TileShape;
 
 OutShape getOutShape(ImgShape is, FltShape fs) {
@@ -194,7 +194,7 @@ VShape getVShape(ImgShape is, TileShape ts) {
   return vs;
 }
 
-TileIndex getTileIndex(int tileNo, TileShape ts) {
+TileIndex getTileIndex(int64_t tileNo, TileShape ts) {
   TileIndex ti;
   ti.b = tileNo / ts.numTilePerImg;
   tileNo = tileNo % ts.numTilePerImg;
@@ -205,13 +205,13 @@ TileIndex getTileIndex(int tileNo, TileShape ts) {
 
 
 typedef struct {   // Interval which is [start, end)
-  int start;
-  int end;
-	int len;
+  int64_t start;
+  int64_t end;
+	int64_t len;
 } Interval;
 
 
-Interval newInterval(int start, int end) {
+Interval newInterval(int64_t start, int64_t end) {
 	Interval it;
 	it.start = start;
 	it.end = end;
@@ -219,7 +219,7 @@ Interval newInterval(int start, int end) {
   return it;
 }
 
-Interval newIntervalWithUpperBound(int start, int step, int upperBound) {
+Interval newIntervalWithUpperBound(int64_t start, int64_t step, int64_t upperBound) {
 	Interval it;
 	it.start = start;
 	it.end = MIN(start + step, upperBound);
@@ -229,6 +229,6 @@ Interval newIntervalWithUpperBound(int start, int step, int upperBound) {
 
 /* Parameters */
 
-const int outputChannelBlockSize = 64;
-const int inputChannelBlockSize = 32;
-const int tileBlockSize = 28;
+const int64_t outputChannelBlockSize = 64;
+const int64_t inputChannelBlockSize = 32;
+const int64_t tileBlockSize = 28;
