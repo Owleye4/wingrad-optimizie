@@ -56,17 +56,17 @@
 #define MIN(A, B) (((A) < (B)) ? (A) : (B))
 #define MAX(A, B) (((A) > (B)) ? (A) : (B))
 
-#define FLT_H 3
-#define FLT_W 3
-#define FLT_HW 3
+#define FLT_H 3L
+#define FLT_W 3L
+#define FLT_HW 3L
 
-#define TILE_IN_HW 6
-#define TILE_IN_H 6
-#define TILE_IN_W 6
+#define TILE_IN_HW 6L
+#define TILE_IN_H 6L
+#define TILE_IN_W 6L
 
-#define TILE_OUT_HW 4
-#define TILE_OUT_H 4
-#define TILE_OUT_W 4
+#define TILE_OUT_HW 4L
+#define TILE_OUT_H 4L
+#define TILE_OUT_W 4L
 
 
 #define ROUND(A, B) ((A) / (B) * (B))
@@ -231,4 +231,4 @@ Interval newIntervalWithUpperBound(int64_t start, int64_t step, int64_t upperBou
 
 const int64_t outputChannelBlockSize = 64;
 const int64_t inputChannelBlockSize = 64;
-const int64_t tileBlockSize = 18;
+const int64_t tileBlockSize = 16;
