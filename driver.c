@@ -157,7 +157,7 @@ void winograd_conv(const int layer_idx, const int validation_mode,
     for (n = 0; n < (long) batch * sizeO * K; n++)
       if (fabs((out[n] - out_ref[n]) / out_ref[n]) > 1e-4) {
         printf(
-            "Validation Failed ! winogradConv[%d] = %f || directConv[%d] = %f "
+            "Validation Failed ! winogradConv[%ld] = %f || directConv[%ld] = %f "
             "\n",
             n, out[n], n, out_ref[n]);
         break;
@@ -172,7 +172,7 @@ void winograd_conv(const int layer_idx, const int validation_mode,
       M = (float *)aligned_alloc(64, sizeof(float) * 8 * 8 * (K + 3) * P);
 
       // 担心上面的空间还没创建完成，就启动了计时模块
-      usleep(10);
+      // usleep(10);
 
     double start_time = timestamp();
     for (int i = 0; i < LOOP_NUM; i++) {

@@ -1,10 +1,7 @@
-KBLAS_LIB_DIR = /shareofs/apps/libs/kml/2.2.0-bisheng3.2.0/lib/kblas/locking
-KBLAS_INCLUDE_DIR = /shareofs/apps/libs/kml/2.2.0-bisheng3.2.0/include
+CFLAG_OPT = -O3 -march=native -ffast-math -fvectorize -funroll-loops -fopenmp -mtune=native
 
 all:
-	# Only Bisheng compiler (which uses clang) is allowed according to the PAC commitee.
-	clang -std=c11 -Ofast -g driver.c winograd.c -o winograd  -mcpu=linxicore9100 -mtune=native  -ffast-math -fvectorize -funroll-loops -fopenmp \
-		            -I ${KBLAS_INCLUDE_DIR} -L${KBLAS_LIB_DIR} -lkblas
+	icx -std=c11 -O3 -g driver.c winograd.c -o winograd ${CFLAG_OPT} -lmkl_rt
 
 debug:
 	clang -std=c11 -Og -g driver.c winograd.c -o winograd -march=native+sve # for perf & debug

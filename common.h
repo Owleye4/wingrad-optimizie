@@ -1,10 +1,11 @@
 #pragma once
-#include <arm_sve.h>
+// #include <arm_sve.h>
 #include <time.h>
 #include <assert.h>
 #include <sys/time.h>
 #include <omp.h>
 #include <stdint.h>
+#include "sve2avx.h"
 
 #define PRAGMA(X) _Pragma(#X)
 #define OMP
@@ -18,7 +19,7 @@
 	#define PRAGMA_OMP_PARALLEL_FOR_COLLAPSE_PROC_BIND_SPREAD(X) 
 #endif
 
-#define FP32_PER_REG 8
+#define FP32_PER_REG 16
 
 #define DECLARE_SVE_FP32_REGS() \
 		svfloat32_t	z0; \
@@ -230,6 +231,6 @@ Interval newIntervalWithUpperBound(int64_t start, int64_t step, int64_t upperBou
 
 /* Parameters */
 
-const int64_t outputChannelBlockSize = 64;
+const int64_t outputChannelBlockSize = 32;
 const int64_t inputChannelBlockSize = 64;
-const int64_t tileBlockSize = 16;
+const int64_t tileBlockSize = 10;

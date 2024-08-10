@@ -3,9 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <arm_sve.h>
+// #include <arm_sve.h>
 #include "common.h"
-#include "kblas.h"
+// #include "kblas.h"
+#include <mkl.h>
 ALWAYS_INLINE void filterIcPack(float* __restrict__ filter, FltShape fs, float* __restrict__ packedFiler) {
   typedef float (*packedFilerTensor_t) [FLT_H][FLT_W][fs.ic];
   typedef float (*filterTensor_t) [fs.ic][FLT_H][FLT_W];
