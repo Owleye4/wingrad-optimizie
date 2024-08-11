@@ -1,453 +1,455 @@
 #include <assert.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-// #include <arm_sve.h>
+// #include <mkl.h>
+#include <cublas_v2.h>
+#include <Error.h>
 #include "common.h"
-// #include "kblas.h"
-#include <mkl.h>
-ALWAYS_INLINE void filterIcPack(float* __restrict__ filter, FltShape fs, float* __restrict__ packedFiler) {
-  typedef float (*packedFilerTensor_t) [FLT_H][FLT_W][fs.ic];
-  typedef float (*filterTensor_t) [fs.ic][FLT_H][FLT_W];
-  packedFilerTensor_t packedFilerTensor = (packedFilerTensor_t) packedFiler;
+
+ALWAYS_INLINE void filterOcIcPack(float* __restrict__ filter, FltShape fs, float* __restrict__ packedFilter) {
+  int outChannel = fs.oc, inChannel = fs.ic;
+  typedef float (*packedFilerTensor_t) [FLT_W][outChannel][inChannel];
+  typedef float (*filterTensor_t) [inChannel][FLT_H][FLT_W];
+  packedFilerTensor_t packedFilerTensor = (packedFilerTensor_t) packedFilter;
   filterTensor_t filterTensor = (filterTensor_t) filter;
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(3)
-  for(int  k = 0; k < fs.oc; ++k)
-    for(int  h = 0; h < FLT_HW; ++h)
-      for(int  w = 0; w < FLT_HW; ++w)
-        for(int  c = 0; c < fs.ic; ++c)
-          packedFilerTensor[k][h][w][c] = filterTensor[k][c][h][w];
-}
-
-ALWAYS_INLINE void ImageIcPack(float* __restrict__ image, ImgShape is,  float* __restrict__ packedImage) {
-  typedef float (*packedImageTensor_t) [is.h][is.w][is.ic];
-  typedef float (*imageTensor_t) [is.ic][is.h][is.w];
-  packedImageTensor_t packedImageTensor = (packedImageTensor_t) packedImage;
-  imageTensor_t imageTensor = (imageTensor_t) image;
   PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for(int  n = 0; n < is.numImg; ++n)
-    for(int  h = 0; h < is.h; ++h)
-      for(int  c = 0; c < is.ic; ++c)
-        for(int  w = 0; w < is.w; ++w)
-          packedImageTensor[n][h][w][c] = imageTensor[n][c][h][w];
+  for(int k = 0; k < outChannel; ++k)
+    for(int h = 0; h < FLT_HW; ++h)
+      for(int w = 0; w < FLT_HW; ++w)
+        for(int c = 0; c < inChannel; ++c) {
+          packedFilerTensor[h][w][k][c] = filterTensor[k][c][h][w];
+        }
 }
 
-ALWAYS_INLINE void filterTransformSVE(float* __restrict__ packedFilter, float* __restrict__ U, UShape us, int  simdDimSize, int  simdDimIndex) {
-  typedef float (*packedFilterTensor_t) [FLT_W][simdDimSize];
-  typedef float (*UTensor_t) [TILE_IN_W][simdDimSize];
-  packedFilterTensor_t packedFilterTensor = (packedFilterTensor_t) packedFilter;
-  UTensor_t UTensor = (UTensor_t) U;
-  float tmp[TILE_IN_W][FLT_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
-  DECLARE_SVE_FP32_REGS();
-  z25 = svdup_f32(1.0f);
-  z26 = svdup_f32( -1.0f / 6.0f  );
-  z27 = svdup_f32( -1.0f / 12.0f );
-  z28 = svdup_f32(  1.0f / 4.0f  );
-  z29 = svdup_f32(  1.0f / 6.0f  );
-  z30 = svdup_f32(  1.0f / 12.0f );
-  z31 = svdup_f32(  1.0f / 24.0f  );
-  svbool_t pg = svwhilelt_b32(0, MIN(FP32_PER_REG, simdDimSize-simdDimIndex));
-  // G * filter
-  for (int  i = 0; i < FLT_HW; ++i) {     // 这个循环按row遍历filter（按G以及结果的column）， 按列产生结果。
-    z6 = svld1(pg, &packedFilterTensor[0][i][simdDimIndex]);
+ALWAYS_INLINE void ImageTileIcPack(float* __restrict__ image, ImgShape is,  float* __restrict__ packedImage,  TileShape ts) {
+  int  inputChannels = is.ic, imgHeight = is.h, imgWidth = is.w, numTileTotal = ts.numTileTotal;
+  typedef float (*ImgTensor_t) [inputChannels][imgHeight][imgWidth];
+  typedef float (*packedImgTensor_t) [TILE_IN_W][numTileTotal][inputChannels];
+  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
+  for(int tile = 0; tile < numTileTotal; ++tile)
+    for(int ic = 0; ic < inputChannels; ++ic)
+      for(int h = 0; h < TILE_IN_H; ++h)
+        for(int w = 0; w < TILE_IN_W; ++w) {
+          TileIndex ti = getTileIndex(tile, ts);
+          int b = ti.b, x = ti.tw, y = ti.th;
+          packedImgTensor_t packedImgTensor = (packedImgTensor_t) packedImage;
+          ImgTensor_t imgTensor = (ImgTensor_t) image;
+          if(y * 4 + h < imgHeight && x * 4 + w < imgWidth)
+            packedImgTensor[h][w][tile][ic] = imgTensor[b][ic][y * 4 + h][x * 4 + w];
+          else
+            packedImgTensor[h][w][tile][ic] = 0;
+        }
+}
 
-    z0 = svmul_f32_x(pg, z28, z6);
-    z1 = svmul_f32_x(pg, z26, z6);
-    z2 = svmul_f32_x(pg, z26, z6);
-    z3 = svmul_f32_x(pg, z31, z6);
-    z4 = svmul_f32_x(pg, z31, z6);
+__global__ void srcTransformCUDA(float* __restrict__ packedImage, float* __restrict__ V, VShape vs, int simdDimSize) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  float z0, z1, z2, z3, z4, z5, z6;
+  while (idx < simdDimSize) {
+    for (int w = 0; w < TILE_IN_W; ++w) {
+      z6 = packedImage[0 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
 
-    z6 = svld1(pg, &packedFilterTensor[1][i][simdDimIndex]);
+      z0 = 4.0f * z6;
 
-    // z0 += 0;
-    z1 = svmla_f32_x(pg, z1, z26, z6);
-    z2 = svmla_f32_x(pg, z2, z29, z6);
-    z3 = svmla_f32_x(pg, z3, z30, z6);
-    z4 = svmla_f32_x(pg, z4, z27, z6);
-    // z5 += 0;
-    z6 = svld1(pg, &packedFilterTensor[2][i][simdDimIndex]);
+      z6 = packedImage[1 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
 
-    // z0 += 0;
-    z1 = svmla_f32_x(pg, z1, z26, z6);
-    z2 = svmla_f32_x(pg, z2, z26, z6);
-    z3 = svmla_f32_x(pg, z3, z29, z6);
-    z4 = svmla_f32_x(pg, z4, z29, z6);
-    z5 = z6;
+      z1 = -4.0f * z6;
+      z2 =  4.0f * z6;
+      z3 = -2.0f * z6;
+      z4 =  2.0f * z6;
+      z5 =  4.0f * z6;
 
-    svst1_f32(pg, tmp[0][i], z0);
-    svst1_f32(pg, tmp[1][i], z1);
-    svst1_f32(pg, tmp[2][i], z2);
-    svst1_f32(pg, tmp[3][i], z3);
-    svst1_f32(pg, tmp[4][i], z4);
-    svst1_f32(pg, tmp[5][i], z5);
-  }
-  // (G * filter) * G_T
-  for (int  i = 0; i < TILE_IN_H; ++i) {    // 这个循环按row遍历(G * filter)（按G_T的column遍历），按行产生结果。
-    z6 = svld1(pg, tmp[i][0]);
-    
-    z0 = svmul_f32_x(pg, z28, z6);
-    z1 = svmul_f32_x(pg, z26, z6);
-    z2 = svmul_f32_x(pg, z26, z6);
-    z3 = svmul_f32_x(pg, z31, z6);
-    z4 = svmul_f32_x(pg, z31, z6);
+      z6 = packedImage[2 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
 
-    z6 = svld1(pg, tmp[i][1]);
-    
-    // z0 += 0;
-    z1 = svmla_f32_x(pg, z1, z26, z6);
-    z2 = svmla_f32_x(pg, z2, z29, z6);
-    z3 = svmla_f32_x(pg, z3, z30, z6);
-    z4 = svmla_f32_x(pg, z4, z27, z6);
-    // z5 += 0;
-    z6 = svld1(pg, tmp[i][2]);
-    
-    // z0 += 0;
-    z1 = svmla_f32_x(pg, z1, z26, z6);
-    z2 = svmla_f32_x(pg, z2, z26, z6);
-    z3 = svmla_f32_x(pg, z3, z29, z6);
-    z4 = svmla_f32_x(pg, z4, z29, z6);
-    z5 = z6;    
+      z0 += -5.0f * z6;
+      z1 += -4.0f * z6;
+      z2 += -4.0f * z6;
+      z3 += -z6;
+      z4 += -z6;
 
-    svst1_f32(pg, &UTensor[i][0][simdDimIndex], z0);
-    svst1_f32(pg, &UTensor[i][1][simdDimIndex], z1);
-    svst1_f32(pg, &UTensor[i][2][simdDimIndex], z2);
-    svst1_f32(pg, &UTensor[i][3][simdDimIndex], z3);
-    svst1_f32(pg, &UTensor[i][4][simdDimIndex], z4);
-    svst1_f32(pg, &UTensor[i][5][simdDimIndex], z5);
+      z6 = packedImage[3 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
+
+      z1 +=  z6;
+      z2 += -z6;
+      z3 +=  2.0f * z6;
+      z4 += -2.0f * z6;
+      z5 += -5.0f * z6;
+
+      z6 = packedImage[4 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
+
+      z0 += z6;
+      z1 += z6;
+      z2 += z6;
+      z3 += z6;
+      z4 += z6;
+
+      z6 = packedImage[5 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
+
+      z5 += z6;
+
+      V[0 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z0;
+      V[1 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z1;
+      V[2 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z2;
+      V[3 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z3;
+      V[4 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z4;
+      V[5 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z5;
+    }
+
+    for (int h = 0; h < TILE_IN_H; ++h) {
+      z6 = V[h * TILE_IN_W * simdDimSize + 0 * simdDimSize + idx];
+
+      z0 = 4.0f * z6;
+
+      z6 = V[h * TILE_IN_W * simdDimSize + 1 * simdDimSize + idx];
+
+      z1 = -4.0f * z6;
+      z2 =  4.0f * z6;
+      z3 = -2.0f * z6;
+      z4 =  2.0f * z6;
+      z5 =  4.0f * z6;
+
+      z6 = V[h * TILE_IN_W * simdDimSize + 2 * simdDimSize + idx];
+
+      z0 += -5.0f * z6;
+      z1 += -4.0f * z6;
+      z2 += -4.0f * z6;
+      z3 += -z6;
+      z4 += -z6;
+
+      z6 = V[h * TILE_IN_W * simdDimSize + 3 * simdDimSize + idx];
+
+      z1 +=  z6;
+      z2 += -z6;
+      z3 +=  2.0f * z6;
+      z4 += -2.0f * z6;
+      z5 += -5.0f * z6;
+
+      z6 = V[h * TILE_IN_W * simdDimSize + 4 * simdDimSize + idx];
+
+      z0 += z6;
+      z1 += z6;
+      z2 += z6;
+      z3 += z6;
+      z4 += z6;
+
+      z6 = V[h * TILE_IN_W * simdDimSize + 5 * simdDimSize + idx];
+
+      z5 += z6;
+
+      V[h * TILE_IN_W * simdDimSize + 0 * simdDimSize + idx] = z0;
+      V[h * TILE_IN_W * simdDimSize + 1 * simdDimSize + idx] = z1;
+      V[h * TILE_IN_W * simdDimSize + 2 * simdDimSize + idx] = z2;
+      V[h * TILE_IN_W * simdDimSize + 3 * simdDimSize + idx] = z3;
+      V[h * TILE_IN_W * simdDimSize + 4 * simdDimSize + idx] = z4;
+      V[h * TILE_IN_W * simdDimSize + 5 * simdDimSize + idx] = z5;
+    }
+    idx += blockDim.x * gridDim.x;
   }
 }
 
+ALWAYS_INLINE void srcTransform(float* __restrict__ packedImage, float* __restrict__  V, VShape vs) {
+  srcTransformCUDA<<<1, 256>>>(packedImage, V, vs, vs.ic * vs.numTileTotal);
+  HANDLER_ERROR_MSG("kernel panic!!!");
+}
 
-ALWAYS_INLINE void srcPaddingAndTransformSVE(float* __restrict__ packedImage, ImgShape is,  float* V, VShape vs, int  tileNo, TileShape ts, int  c) {
-  TileIndex ti = getTileIndex(tileNo, ts);
-  int64_t  n = ti.b, x = ti.tw, y = ti.th;
-  int64_t  inHeight = is.h, inWidth = is.w, C = is.ic;
-  typedef float (*packedImageTensor_t) [is.h][is.w][is.ic];
-  typedef float (*VSlicedTensor_t) [TILE_IN_W][is.ic];
-  packedImageTensor_t packedImageTensor = (packedImageTensor_t) packedImage;
-  VSlicedTensor_t VTensor = (VSlicedTensor_t) (V + tileNo * TILE_IN_H * TILE_IN_W * is.ic);
-  DECLARE_SVE_FP32_REGS();
-  z22 = svdup_f32( -8.0f );
-  z23 = svdup_f32(  8.0f );
-  z24 = svdup_f32(  1.0f );
-  z25 = svdup_f32( -1.0f );
-  z26 = svdup_f32(  2.0f );
-  z27 = svdup_f32( -2.0f );
-  z28 = svdup_f32(  4.0f );
-  z29 = svdup_f32( -4.0f );
-  z30 = svdup_f32(  5.0f );
-  z31 = svdup_f32( -5.0f );
-  float tmp[TILE_IN_H][TILE_IN_W][FP32_PER_REG] ATTRIBUTE_ALIGN(128);
-  memset((void*) tmp, 0, sizeof(tmp));
-  svbool_t pg = svwhilelt_b32(0L, MIN(FP32_PER_REG, is.ic - c));
+__global__ void filterTransformCUDA(float* __restrict__ packedFilter, float* __restrict__ U, UShape us, int simdDimSize) {
 
-  for (int  xx = 0; xx < TILE_IN_W && (x * 4 + xx) < is.w; ++xx) {   // 按列产生结果。
-    if((y * 4 + 0) < inHeight){
-      z6 = svld1(pg, &packedImageTensor[n][y * 4 + 0][x * 4 + xx][c]);
-      z0 = svmul_f32_x(pg, z28, z6);
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+  float z0, z1, z2, z3, z4, z5, z6;
+  while (idx < simdDimSize) {
+    for (int i = 0; i < FLT_HW; ++i) {
+      z6 = packedFilter[0 * FLT_W * simdDimSize + i * simdDimSize + idx];
+
+      z0 = (1.0f / 4.0f)  * z6;
+      z1 = (-1.0f / 6.0f) * z6;
+      z2 = (-1.0f / 6.0f) * z6;
+      z3 = (1.0f / 24.0f) * z6;
+      z4 = (1.0f / 24.0f) * z6;
+
+      z6 = packedFilter[1 * FLT_W * simdDimSize + i * simdDimSize + idx];
+
+      z1 += (-1.0f / 6.0f)  * z6;
+      z2 += ( 1.0f / 6.0f)  * z6;
+      z3 += (1.0f  / 12.0f) * z6;
+      z4 += (-1.0f / 12.0f) * z6;
+
+      z6 = packedFilter[2 * FLT_W * simdDimSize + i * simdDimSize + idx];
+
+      z1 += (-1.0f / 6.0f) * z6;
+      z2 += (-1.0f / 6.0f) * z6;
+      z3 += ( 1.0f / 6.0f) * z6;
+      z4 += ( 1.0f / 6.0f) * z6;
+      z5 = z6;
+
+      U[0 * TILE_IN_W * simdDimSize + i * simdDimSize + idx] = z0;
+      U[1 * TILE_IN_W * simdDimSize + i * simdDimSize + idx] = z1;
+      U[2 * TILE_IN_W * simdDimSize + i * simdDimSize + idx] = z2;
+      U[3 * TILE_IN_W * simdDimSize + i * simdDimSize + idx] = z3;
+      U[4 * TILE_IN_W * simdDimSize + i * simdDimSize + idx] = z4;
+      U[5 * TILE_IN_W * simdDimSize + i * simdDimSize + idx] = z5;
     }
 
-    if((y * 4 + 1) < is.h) {
-      z6 = svld1(pg, &packedImageTensor[n][y * 4 + 1][x * 4 + xx][c]);
-      z1 = svmul_f32_x(pg, z29, z6);
-      z2 = svmul_f32_x(pg, z28, z6);
-      z3 = svmul_f32_x(pg, z27, z6);
-      z4 = svmul_f32_x(pg, z26, z6);
-      z5 = svmul_f32_x(pg, z28, z6);
+    for (int i = 0; i < TILE_IN_H; ++i) {
+      z6 = U[i * TILE_IN_W * simdDimSize + 0 * simdDimSize + idx];
+
+      z0 = (1.0f / 4.0f)  * z6;
+      z1 = (-1.0f / 6.0f) * z6;
+      z2 = (-1.0f / 6.0f) * z6;
+      z3 = (1.0f / 24.0f) * z6;
+      z4 = (1.0f / 24.0f) * z6;
+
+      z6 = U[i * TILE_IN_W * simdDimSize + 1 * simdDimSize + idx];
+
+      z1 += (-1.0f / 6.0f)  * z6;
+      z2 += ( 1.0f / 6.0f)  * z6;
+      z3 += (1.0f  / 12.0f) * z6;
+      z4 += (-1.0f / 12.0f) * z6;
+
+      z6 = U[i * TILE_IN_W * simdDimSize + 2 * simdDimSize + idx];
+
+      z1 += (-1.0f / 6.0f) * z6;
+      z2 += (-1.0f / 6.0f) * z6;
+      z3 += ( 1.0f / 6.0f) * z6;
+      z4 += ( 1.0f / 6.0f) * z6;
+      z5 = z6;
+
+      U[i * TILE_IN_W * simdDimSize + 0 * simdDimSize + idx] = z0;
+      U[i * TILE_IN_W * simdDimSize + 1 * simdDimSize + idx] = z1;
+      U[i * TILE_IN_W * simdDimSize + 2 * simdDimSize + idx] = z2;
+      U[i * TILE_IN_W * simdDimSize + 3 * simdDimSize + idx] = z3;
+      U[i * TILE_IN_W * simdDimSize + 4 * simdDimSize + idx] = z4;
+      U[i * TILE_IN_W * simdDimSize + 5 * simdDimSize + idx] = z5;
     }
-
-    if((y * 4 + 2) < is.h) {
-      z6 = svld1(pg, &packedImageTensor[n][y * 4 + 2][x * 4 + xx][c]);
-      z0 = svmla_f32_x(pg, z0, z31, z6);
-      z1 = svmla_f32_x(pg, z1, z29, z6);
-      z2 = svmla_f32_x(pg, z2, z29, z6);
-      z3 = svmla_f32_x(pg, z3, z25, z6);
-      z4 = svmla_f32_x(pg, z4, z25, z6);
-    }
-
-    if((y * 4 + 3) < is.h) {
-      z6 = svld1(pg, &packedImageTensor[n][y * 4 + 3][x * 4 + xx][c]);
-      z1 = svmla_f32_x(pg, z1, z24, z6);
-      z2 = svmla_f32_x(pg, z2, z25, z6);
-      z3 = svmla_f32_x(pg, z3, z26, z6);
-      z4 = svmla_f32_x(pg, z4, z27, z6);
-      z5 = svmla_f32_x(pg, z5, z31, z6);
-    }
-
-    if((y * 4 + 4) < is.h) {
-      z6 = svld1(pg, &packedImageTensor[n][y * 4 + 4][x * 4 + xx][c]);
-      z0 = svmla_f32_x(pg, z0, z24, z6);
-      z1 = svmla_f32_x(pg, z1, z24, z6);
-      z2 = svmla_f32_x(pg, z2, z24, z6);
-      z3 = svmla_f32_x(pg, z3, z24, z6);
-      z4 = svmla_f32_x(pg, z4, z24, z6);
-    }
-
-    if((y * 4 + 5) < is.h) {
-      z6 = svld1(pg, &packedImageTensor[n][y * 4 + 5][x * 4 + xx][c]);
-      z5 = svmla_f32_x(pg, z5, z24, z6);
-    }
-
-    svst1_f32(pg, tmp[0][xx], z0);
-    svst1_f32(pg, tmp[1][xx], z1);
-    svst1_f32(pg, tmp[2][xx], z2);
-    svst1_f32(pg, tmp[3][xx], z3);
-    svst1_f32(pg, tmp[4][xx], z4);
-    svst1_f32(pg, tmp[5][xx], z5);
-  }
-
-  for (int  yy = 0; yy < TILE_IN_H; ++yy) {   // 按行产生结果。
-    z6 = svld1(pg, tmp[yy][0]);
-
-    z0 = svmul_f32_x(pg, z28, z6);
-
-    z6 = svld1(pg, tmp[yy][1]);
-
-    z1 = svmul_f32_x(pg, z29, z6);
-    z2 = svmul_f32_x(pg, z28, z6);
-    z3 = svmul_f32_x(pg, z27, z6);
-    z4 = svmul_f32_x(pg, z26, z6);
-    z5 = svmul_f32_x(pg, z28, z6);
-
-    z6 = svld1(pg, tmp[yy][2]);
-
-    z0 = svmla_f32_x(pg, z0, z31, z6);
-    z1 = svmla_f32_x(pg, z1, z29, z6);
-    z2 = svmla_f32_x(pg, z2, z29, z6);
-    z3 = svmla_f32_x(pg, z3, z25, z6);
-    z4 = svmla_f32_x(pg, z4, z25, z6);
-
-    z6 = svld1(pg, tmp[yy][3]);
-
-    z1 = svmla_f32_x(pg, z1, z24, z6);
-    z2 = svmla_f32_x(pg, z2, z25, z6);
-    z3 = svmla_f32_x(pg, z3, z26, z6);
-    z4 = svmla_f32_x(pg, z4, z27, z6);
-    z5 = svmla_f32_x(pg, z5, z31, z6);
-
-    z6 = svld1(pg, tmp[yy][4]);
-    
-    z0 = svmla_f32_x(pg, z0, z24, z6);
-    z1 = svmla_f32_x(pg, z1, z24, z6);
-    z2 = svmla_f32_x(pg, z2, z24, z6);
-    z3 = svmla_f32_x(pg, z3, z24, z6);
-    z4 = svmla_f32_x(pg, z4, z24, z6);
-
-    z6 = svld1(pg, tmp[yy][5]);
-
-    z5 = svmla_f32_x(pg, z5, z24, z6);
-
-    svst1_f32(pg, &VTensor[yy][0][c], z0);
-    svst1_f32(pg, &VTensor[yy][1][c], z1);
-    svst1_f32(pg, &VTensor[yy][2][c], z2);
-    svst1_f32(pg, &VTensor[yy][3][c], z3);
-    svst1_f32(pg, &VTensor[yy][4][c], z4);
-    svst1_f32(pg, &VTensor[yy][5][c], z5);
+    idx += blockDim.x * gridDim.x;
   }
 }
 
 ALWAYS_INLINE void filterTransform(float* __restrict__ packedFilter, float* __restrict__ U, UShape us) {
-  int  K = us.oc, C = us.ic;
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for (int  k = 0; k < K; ++k) {
-    for(int  c = 0; c < C; c += FP32_PER_REG) {
-      filterTransformSVE(packedFilter + k * FLT_H * FLT_W * C, U + k * TILE_IN_H * TILE_IN_W * C, us, C, c);
+  // PRAGMA_OMP_PARALLEL_FOR()
+  // for(int ocic = 0; ocic < us.oc * us.ic; ocic += FP32_PER_REG) 
+  filterTransformCUDA<<<1, 256>>>(packedFilter, U, us, us.ic * us.oc);
+  HANDLER_ERROR_MSG("kernel panic!!!");
+}
+
+__global__ void destTransformCUDA(float* __restrict__ M, float* __restrict__ Y, int simdDimSize) {
+
+  int idx = blockIdx.x * blockDim.x + threadIdx.x; 
+
+  float z0, z1, z2, z3, z4;
+  while (idx < simdDimSize) {
+    for (int w = 0; w < TILE_IN_W; ++w) {
+      z4 = M[0 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
+
+      z0 = z4;
+
+      z4 = M[1 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
+
+      z0 = z0 + z4;
+      z1 = z4;
+      z2 = z4;
+      z3 = z4;
+      
+      z4 = M[2 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
+
+      z0 += z4;
+      z1 += -z4;
+      z2 += z4;
+      z3 += -z4;
+
+      z4 = M[3 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
+
+      z0 += z4;
+      z1 += 2.0f * z4;
+      z2 += 4.0f * z4;
+      z3 += 8.0f * z4;
+
+      z4 = M[4 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
+
+      z0 += z4;
+      z1 += -2.0f * z4;
+      z2 += 4.0f * z4;
+      z3 += -8.0f * z4;
+
+      z4 = M[5 * TILE_IN_W * simdDimSize + w * simdDimSize + idx];
+
+      z3 += z4;
+
+      Y[0 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z0;
+      Y[1 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z1;
+      Y[2 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z2;
+      Y[3 * TILE_IN_W * simdDimSize + w * simdDimSize + idx] = z3;
     }
+
+    for (int h = 0; h < TILE_OUT_HW; ++h) {
+      z4 = Y[h * TILE_IN_W * simdDimSize + 0 * simdDimSize + idx];
+
+      z0 = z4;
+
+      // z4 = svld1(pg, &YTensor[h][1][idx]);
+      // z4 = YTensor[h][1][idx];
+      z4 = Y[h * TILE_IN_W * simdDimSize + 1 * simdDimSize + idx];
+
+      z0 += z4;
+      z1 = z4;
+      z2 = z4;
+      z3 = z4;
+      
+      // z4 = svld1(pg, &YTensor[h][2][idx]);
+      // z4 = YTensor[h][2][idx];
+      z4 = Y[h * TILE_IN_W * simdDimSize + 2 * simdDimSize + idx];
+      
+      z0 += z4;
+      z1 += -z4;
+      z2 += z4;
+      z3 += -z4;
+
+      // z4 = svld1(pg, &YTensor[h][3][idx]);
+      // z4 = YTensor[h][3][idx];
+      z4 = Y[h * TILE_IN_W * simdDimSize + 3 * simdDimSize + idx];
+
+      z0 += z4;
+      z1 += 2.0f * z4;
+      z2 += 4.0f * z4;
+      z3 += 8.0f * z4;
+
+      // z4 = svld1(pg, &YTensor[h][4][idx]);
+      // z4 = YTensor[h][4][idx];
+      z4 = Y[h * TILE_IN_W * simdDimSize + 4 * simdDimSize + idx];
+
+
+      z0 += z4;
+      z1 += -2.0f * z4;
+      z2 += 4.0f * z4;
+      z3 += -8.0f * z4;
+
+      // z4 = svld1(pg, &YTensor[h][5][idx]);
+      // z4 = YTensor[h][5][idx];
+      z4 = Y[h * TILE_IN_W * simdDimSize + 5 * simdDimSize + idx];
+
+      z3 += z4;
+
+      // svst1_f32(pg, &YTensor[h][0][idx], z0);
+      // svst1_f32(pg, &YTensor[h][1][idx], z1);
+      // svst1_f32(pg, &YTensor[h][2][idx], z2);
+      // svst1_f32(pg, &YTensor[h][3][idx], z3);
+      // YTensor[h][0][idx] = z0;
+      // YTensor[h][1][idx] = z1;
+      // YTensor[h][2][idx] = z2;
+      // YTensor[h][3][idx] = z3;
+      Y[h * TILE_IN_W * simdDimSize + 0 * simdDimSize + idx] = z0;
+      Y[h * TILE_IN_W * simdDimSize + 1 * simdDimSize + idx] = z1;
+      Y[h * TILE_IN_W * simdDimSize + 2 * simdDimSize + idx] = z2;
+      Y[h * TILE_IN_W * simdDimSize + 3 * simdDimSize + idx] = z3;
+    }
+    idx += blockDim.x * gridDim.x;
   }
 }
 
-ALWAYS_INLINE void destTransformSVE(float* __restrict__ M, float* __restrict__ Y, int64_t  simdDimSize, int64_t  simdDimIndex) {
-  
-  typedef float (*MTensor_t)[TILE_IN_W][simdDimSize];
-  typedef float (*YTensor_t)[TILE_IN_W][simdDimSize];
-
-  MTensor_t MTensor = (MTensor_t) M;
-  YTensor_t YTensor = (YTensor_t) Y;
-
-  DECLARE_SVE_FP32_REGS()
-  z22 = svdup_f32( -8.0f );
-  z23 = svdup_f32(  8.0f );
-  z24 = svdup_f32(  1.0f );
-  z25 = svdup_f32( -1.0f );
-  z26 = svdup_f32(  2.0f );
-  z27 = svdup_f32( -2.0f );
-  z28 = svdup_f32(  4.0f );
-  z29 = svdup_f32( -4.0f );
-  z30 = svdup_f32(  5.0f );
-  z31 = svdup_f32( -5.0f );
-  svbool_t pg = svwhilelt_b32(0L, MIN(FP32_PER_REG, simdDimSize - simdDimIndex));
-  for (int  w = 0; w < TILE_IN_W; ++w) {   // 按列产生结果。
-    z4 = svld1(pg, &MTensor[0][w][simdDimIndex]);
-    
-    z0 = z4;
-
-    z4 = svld1(pg, &MTensor[1][w][simdDimIndex]);
-    
-    z0 = svadd_f32_x(pg, z0, z4);
-    z1 = z4;
-    z2 = z4;
-    z3 = z4;
-    
-    z4 = svld1(pg, &MTensor[2][w][simdDimIndex]);
-    
-    z0 = svadd_f32_x(pg, z0, z4);
-    z1 = svsub_f32_x(pg, z1, z4);
-    z2 = svadd_f32_x(pg, z2, z4);
-    z3 = svsub_f32_x(pg, z3, z4);
-
-    z4 = svld1(pg, &MTensor[3][w][simdDimIndex]);
-
-    z0 = svadd_f32_x(pg, z0, z4);
-    z1 = svmla_f32_x(pg, z1, z26, z4);
-    z2 = svmla_f32_x(pg, z2, z28, z4);
-    z3 = svmla_f32_x(pg, z3, z23, z4);
-
-    z4 = svld1(pg, &MTensor[4][w][simdDimIndex]);
-
-    z0 = svadd_f32_x(pg, z0, z4);
-    z1 = svmla_f32_x(pg, z1, z27, z4);
-    z2 = svmla_f32_x(pg, z2, z28, z4);
-    z3 = svmla_f32_x(pg, z3, z22, z4);
-
-    z4 = svld1(pg, &MTensor[5][w][simdDimIndex]);
-
-    z3 = svadd_f32_x(pg, z3, z4);
-
-    svst1_f32(pg, &YTensor[0][w][simdDimIndex], z0);
-    svst1_f32(pg, &YTensor[1][w][simdDimIndex], z1);
-    svst1_f32(pg, &YTensor[2][w][simdDimIndex], z2);
-    svst1_f32(pg, &YTensor[3][w][simdDimIndex], z3);
-  }
-
-  for (int  h = 0; h < TILE_OUT_HW; ++h) {   // 按行产生结果。
-    z4 = svld1(pg, &YTensor[h][0][simdDimIndex]);
-    
-    z0 = z4;
-
-    z4 = svld1(pg, &YTensor[h][1][simdDimIndex]);
-    
-    z0 = svadd_f32_x(pg, z0, z4);
-    z1 = z4;
-    z2 = z4;
-    z3 = z4;
-    
-    z4 = svld1(pg, &YTensor[h][2][simdDimIndex]);
-    
-    z0 = svadd_f32_x(pg, z0, z4);
-    z1 = svsub_f32_x(pg, z1, z4);
-    z2 = svadd_f32_x(pg, z2, z4);
-    z3 = svsub_f32_x(pg, z3, z4);
-
-    z4 = svld1(pg, &YTensor[h][3][simdDimIndex]);
-
-    z0 = svadd_f32_x(pg, z0, z4);
-    z1 = svmla_f32_x(pg, z1, z26, z4);
-    z2 = svmla_f32_x(pg, z2, z28, z4);
-    z3 = svmla_f32_x(pg, z3, z23, z4);
-
-    z4 = svld1(pg, &YTensor[h][4][simdDimIndex]);
-
-    z0 = svadd_f32_x(pg, z0, z4);
-    z1 = svmla_f32_x(pg, z1, z27, z4);
-    z2 = svmla_f32_x(pg, z2, z28, z4);
-    z3 = svmla_f32_x(pg, z3, z22, z4);  // BUG Here 
-
-    z4 = svld1(pg, &YTensor[h][5][simdDimIndex]);
-
-    z3 = svadd_f32_x(pg, z3, z4);
-
-    svst1_f32(pg, &YTensor[h][0][simdDimIndex], z0);
-    svst1_f32(pg, &YTensor[h][1][simdDimIndex], z1);
-    svst1_f32(pg, &YTensor[h][2][simdDimIndex], z2);
-    svst1_f32(pg, &YTensor[h][3][simdDimIndex], z3);
-  }
+ALWAYS_INLINE void destTransform(float* __restrict__ M, float* __restrict__ Y, int simdDimSize) {
+  // for (int octile = 0; octile < simdDimSize; octile += FP32_PER_REG)
+  destTransformCUDA<<<1, 256>>>(M, Y, simdDimSize);
+  HANDLER_ERROR_MSG("kernel panic!!!");
 }
 
-ALWAYS_INLINE void destTransform(float* __restrict__ M, float* __restrict__ Y, int  simdDimSize) {
-  for (int  simdDimIndex = 0; simdDimIndex < simdDimSize; simdDimIndex += FP32_PER_REG)
-    destTransformSVE(M, Y, simdDimSize, simdDimIndex);
-}
-
-ALWAYS_INLINE void destStore(float* __restrict__ Y, float* __restrict__ out, OutShape os, Interval RangeOC, Interval RangeTile, TileShape ts) {
-  typedef float (*YTensor_t) [TILE_IN_W][RangeOC.len][RangeTile.len];
+ALWAYS_INLINE void destStore(float* __restrict__ Y, float* __restrict__ out, OutShape os,  TileShape ts) {
+  typedef float (*YTensor_t) [TILE_IN_W][os.oc][ts.numTileTotal];
   typedef float (*outTensor_t) [os.oc][os.h][os.w];
   YTensor_t YTensor = (YTensor_t) Y;
   outTensor_t outTensor = (outTensor_t) out;
-  for(int  h = 0; h < TILE_OUT_H; ++h)
-    for(int  w = 0; w < TILE_OUT_W; ++w)
-      for(int  k = 0; k < RangeOC.len; ++k)
-        for(int  b = 0; b < RangeTile.len; ++b) {
-          TileIndex ti = getTileIndex(RangeTile.start + b, ts);
-          int  n = ti.b, x = ti.tw, y = ti.th;
+  for(int h = 0; h < TILE_OUT_H; ++h)
+    for(int w = 0; w < TILE_OUT_W; ++w)
+      for(int k = 0; k < os.oc; ++k)
+        for(int b = 0; b < ts.numTileTotal; ++b) {
+          TileIndex ti = getTileIndex(b, ts);
+          int n = ti.b, x = ti.tw, y = ti.th;
           if(y * 4 + h < os.h && x * 4 + w < os.w) 
-            outTensor[n][RangeOC.start + k][y * 4 + h][x * 4 + w] = YTensor[h][w][k][b];
+            outTensor[n][k][y * 4 + h][x * 4 + w] = YTensor[h][w][k][b];
         }
 }
 
-void winconv_2x3(float *__restrict__ image, const int  inHeight,
-                 const int  inWidth, const int  numInChannel, float *__restrict__ filter,
-                 const int  numOutChannel, const int  numBatch, float *__restrict__ out,
+void winconv_2x3(float *__restrict__ image, const int inHeight,
+                 const int inWidth, const int numInChannel, float *__restrict__ filter,
+                 const int numOutChannel, const int numBatch, float *__restrict__ out,
                  float *__restrict__ U_no_use, float *__restrict__ V_no_use,
                  float *__restrict__ M_no_use) {
 
   /* new vars of shape */
-  ImgShape is = {numBatch, numInChannel, inHeight, inWidth};
-  FltShape fs = {numOutChannel, numInChannel, FLT_H, FLT_W};
-  OutShape os = getOutShape(is, fs);
+  ImgShape  is = {numBatch, numInChannel, inHeight, inWidth};
+  FltShape  fs = {numOutChannel, numInChannel, FLT_H, FLT_W};
+  OutShape  os = getOutShape(is, fs);
   TileShape ts = getTileShape(is, os);
-  UShape us = getUShape(fs);
-  VShape vs = getVShape(is, ts);
-  float* filerPacked =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, numOutChannel * numInChannel * FLT_H * FLT_W * sizeof(float));
-  assert(filerPacked != NULL);
-  float* imagePacked =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * numBatch * numInChannel * inHeight * inWidth);
-  assert(imagePacked != NULL);
-  float* V = (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * vs.numTileTotal  * TILE_IN_H * TILE_IN_W * numInChannel);
-  assert(V != NULL);
-  float* U = (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * numOutChannel * TILE_IN_H * TILE_IN_W * numInChannel);
-  assert(U != NULL);
+  UShape    us = getUShape(fs);
+  VShape    vs = getVShape(is, ts);
 
-  typedef float (*UTensor_t) [TILE_IN_H][TILE_IN_W][numInChannel];
-  typedef float (*VTensor_t) [TILE_IN_H][TILE_IN_W][numInChannel];
+  float* packedFilter =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * FLT_H * FLT_W * us.oc * us.ic);
+  assert(packedFilter != NULL);
+
+  float* packedImage =  (float*)   aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * TILE_IN_H * TILE_IN_H * vs.numTileTotal * vs.ic);
+  assert(packedImage  != NULL);
+
+  float* packedFilterDevice, *packedImageDevice;
+  HANDLER_ERROR_ERR(cudaMalloc(&packedFilterDevice, sizeof(float) * FLT_H * FLT_W * us.oc * us.ic));
+  HANDLER_ERROR_ERR(cudaMalloc(&packedImageDevice , sizeof(float) * TILE_IN_H * TILE_IN_H * vs.numTileTotal * vs.ic)); 
+
+  float * U, * V;
+  HANDLER_ERROR_ERR(cudaMalloc(&U, sizeof(float) * TILE_IN_H * TILE_IN_W * us.oc * us.ic));
+  HANDLER_ERROR_ERR(cudaMalloc(&V, sizeof(float) * TILE_IN_H * TILE_IN_W * vs.numTileTotal * vs.ic)); 
+
+  typedef float (*UTensor_t) [TILE_IN_W][     us.oc     ][us.ic];
+  typedef float (*VTensor_t) [TILE_IN_W][vs.numTileTotal][vs.ic];
   UTensor_t UTensor = (UTensor_t) U;
   VTensor_t VTensor = (VTensor_t) V;
 
-  filterIcPack(filter, fs, filerPacked);
-  ImageIcPack(image, is, imagePacked);
+  filterOcIcPack  (filter, fs, packedFilter   );
+  ImageTileIcPack (image , is, packedImage, ts);
 
-  filterTransform(filerPacked, U, us);
 
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for (int  tileNo = 0; tileNo < vs.numTileTotal; ++tileNo) {
-    for (int  c = 0; c < numInChannel; c += FP32_PER_REG) {
-      srcPaddingAndTransformSVE(imagePacked, is, V, vs, tileNo, ts, c);
-    }
+  HANDLER_ERROR_ERR(cudaMemcpy(packedFilterDevice, packedFilter, sizeof(float) * FLT_H * FLT_W * fs.oc * fs.ic, cudaMemcpyHostToDevice));
+  HANDLER_ERROR_ERR(cudaMemcpy(packedImageDevice,  packedImage, sizeof(float) * TILE_IN_H * TILE_IN_H * vs.numTileTotal * vs.ic, cudaMemcpyHostToDevice));
+
+  srcTransform(packedImageDevice, V, vs);
+  filterTransform(packedFilterDevice, U, us);
+
+  float *M, *Y, *YHost; 
+  HANDLER_ERROR_ERR(cudaMalloc(&M, sizeof(float) * TILE_IN_H  * TILE_IN_W  * us.oc * vs.numTileTotal));
+  HANDLER_ERROR_ERR(cudaMalloc(&Y, sizeof(float) * TILE_OUT_H * TILE_IN_W  * us.oc * vs.numTileTotal));
+  YHost = (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * TILE_OUT_H * TILE_IN_W * vs.numTileTotal * us.oc);
+  typedef float (*MTensor_t) [TILE_IN_W][us.oc][vs.numTileTotal];
+  typedef float (*YTensor_t) [TILE_IN_W][us.oc][vs.numTileTotal];
+  MTensor_t MTensor = (MTensor_t) M;
+
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+  float alpha = 1.0f, beta = 0.0f;
+  for(int i = 0; i < TILE_IN_H * TILE_IN_W; ++i) {
+    cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                vs.numTileTotal, us.oc, us.ic,
+                &alpha,
+                (float*)(VTensor[i/TILE_IN_W][i%TILE_IN_W]),
+                vs.ic, 
+                (float*)(UTensor[i/TILE_IN_W][i%TILE_IN_W]),
+                us.ic, 
+                &beta, 
+                (float*)(MTensor[i/TILE_IN_W][i%TILE_IN_W]),
+                vs.numTileTotal);
   }
 
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for(int  ocBlockStart = 0; ocBlockStart < numOutChannel; ocBlockStart +=  outputChannelBlockSize) {
-    for(int  tileBlockStart = 0; tileBlockStart < ts.numTileTotal; tileBlockStart += tileBlockSize) {
-      Interval RangeOC = newIntervalWithUpperBound(ocBlockStart, outputChannelBlockSize, numOutChannel);
-      Interval RangeTile = newIntervalWithUpperBound(tileBlockStart, tileBlockSize, ts.numTileTotal);
-      float M[TILE_IN_H  *  TILE_IN_W][RangeOC.len][RangeTile.len] ATTRIBUTE_ALIGN(128); memset(M, 0, sizeof(M));
-      float Y[TILE_OUT_H *  TILE_IN_W][RangeOC.len][RangeTile.len] ATTRIBUTE_ALIGN(128);
-      for(int  icBlockStart = 0; icBlockStart < numInChannel; icBlockStart += inputChannelBlockSize) {
-        Interval RangeIC = newIntervalWithUpperBound(icBlockStart, inputChannelBlockSize, numInChannel);
-        for(int  i = 0; i < TILE_IN_H * TILE_IN_W; ++i) {
-          cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, 
-                      RangeOC.len, RangeTile.len, RangeIC.len, 1.0f, 
-                      &UTensor[RangeOC.start][i/TILE_IN_W][i%TILE_IN_W][RangeIC.start], TILE_IN_H * TILE_IN_W * numInChannel, 
-                      &VTensor[RangeTile.start][i/TILE_IN_W][i%TILE_IN_W][RangeIC.start], TILE_IN_H * TILE_IN_W * numInChannel, 
-                      1.0f, (float*)M[i], RangeTile.len);
-        }
-      }
-      destTransform((float *)M, (float *)Y, RangeOC.len * RangeTile.len);
-      destStore((float *)Y, out, os, RangeOC, RangeTile, ts);
-    }
-  }
+  cublasDestroy(handle);
 
-  free(U);
-  free(V);
-  free(imagePacked);
-  free(filerPacked);
+  destTransform((float *)M, (float *)Y, us.oc * vs.numTileTotal);
+
+  cudaMemcpy(YHost, Y, sizeof(float) * TILE_OUT_H * TILE_IN_W * us.oc * vs.numTileTotal, cudaMemcpyDeviceToHost);
+
+  destStore(YHost, out, os, ts);
+
+  cudaFree(U);
+  cudaFree(V);
+  cudaFree(packedImageDevice);
+  cudaFree(packedFilterDevice);
+  cudaFree(M);
+  cudaFree(Y);
+  free(packedImage);
+  free(packedFilter);
+  free(YHost);
 }
