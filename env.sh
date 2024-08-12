@@ -1,2 +1,3 @@
-spack load intel-oneapi-mkl@2024.0.0 
-spack load intel-oneapi-compilers@2024.0.2 
+spack load cuda@12.2.1
+spack load nvhpc@23.9  
+spack load intel-oneapi-mkl

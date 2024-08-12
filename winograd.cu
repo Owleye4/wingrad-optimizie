@@ -2,47 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-// #include <mkl.h>
 #include <cublas_v2.h>
-#include <Error.h>
+#include "Error.h"
 #include "common.h"
 
-ALWAYS_INLINE void filterOcIcPack(float* __restrict__ filter, FltShape fs, float* __restrict__ packedFilter) {
-  int outChannel = fs.oc, inChannel = fs.ic;
-  typedef float (*packedFilerTensor_t) [FLT_W][outChannel][inChannel];
-  typedef float (*filterTensor_t) [inChannel][FLT_H][FLT_W];
-  packedFilerTensor_t packedFilerTensor = (packedFilerTensor_t) packedFilter;
-  filterTensor_t filterTensor = (filterTensor_t) filter;
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for(int k = 0; k < outChannel; ++k)
-    for(int h = 0; h < FLT_HW; ++h)
-      for(int w = 0; w < FLT_HW; ++w)
-        for(int c = 0; c < inChannel; ++c) {
-          packedFilerTensor[h][w][k][c] = filterTensor[k][c][h][w];
-        }
-}
-
-ALWAYS_INLINE void ImageTileIcPack(float* __restrict__ image, ImgShape is,  float* __restrict__ packedImage,  TileShape ts) {
-  int  inputChannels = is.ic, imgHeight = is.h, imgWidth = is.w, numTileTotal = ts.numTileTotal;
-  typedef float (*ImgTensor_t) [inputChannels][imgHeight][imgWidth];
-  typedef float (*packedImgTensor_t) [TILE_IN_W][numTileTotal][inputChannels];
-  PRAGMA_OMP_PARALLEL_FOR_COLLAPSE(2)
-  for(int tile = 0; tile < numTileTotal; ++tile)
-    for(int ic = 0; ic < inputChannels; ++ic)
-      for(int h = 0; h < TILE_IN_H; ++h)
-        for(int w = 0; w < TILE_IN_W; ++w) {
-          TileIndex ti = getTileIndex(tile, ts);
-          int b = ti.b, x = ti.tw, y = ti.th;
-          packedImgTensor_t packedImgTensor = (packedImgTensor_t) packedImage;
-          ImgTensor_t imgTensor = (ImgTensor_t) image;
-          if(y * 4 + h < imgHeight && x * 4 + w < imgWidth)
-            packedImgTensor[h][w][tile][ic] = imgTensor[b][ic][y * 4 + h][x * 4 + w];
-          else
-            packedImgTensor[h][w][tile][ic] = 0;
-        }
-}
-
-__global__ void srcTransformCUDA(float* __restrict__ packedImage, float* __restrict__ V, VShape vs, int simdDimSize) {
+__global__ void srcTransform(float* __restrict__ packedImage, float* __restrict__ V, VShape vs, int simdDimSize) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   float z0, z1, z2, z3, z4, z5, z6;
   while (idx < simdDimSize) {
@@ -147,12 +111,7 @@ __global__ void srcTransformCUDA(float* __restrict__ packedImage, float* __restr
   }
 }
 
-ALWAYS_INLINE void srcTransform(float* __restrict__ packedImage, float* __restrict__  V, VShape vs) {
-  srcTransformCUDA<<<1, 256>>>(packedImage, V, vs, vs.ic * vs.numTileTotal);
-  HANDLER_ERROR_MSG("kernel panic!!!");
-}
-
-__global__ void filterTransformCUDA(float* __restrict__ packedFilter, float* __restrict__ U, UShape us, int simdDimSize) {
+__global__ void filterTransform(float* __restrict__ packedFilter, float* __restrict__ U, UShape us, int simdDimSize) {
 
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -225,14 +184,7 @@ __global__ void filterTransformCUDA(float* __restrict__ packedFilter, float* __r
   }
 }
 
-ALWAYS_INLINE void filterTransform(float* __restrict__ packedFilter, float* __restrict__ U, UShape us) {
-  // PRAGMA_OMP_PARALLEL_FOR()
-  // for(int ocic = 0; ocic < us.oc * us.ic; ocic += FP32_PER_REG) 
-  filterTransformCUDA<<<1, 256>>>(packedFilter, U, us, us.ic * us.oc);
-  HANDLER_ERROR_MSG("kernel panic!!!");
-}
-
-__global__ void destTransformCUDA(float* __restrict__ M, float* __restrict__ Y, int simdDimSize) {
+__global__ void destTransform(float* __restrict__ M, float* __restrict__ Y, int simdDimSize) {
 
   int idx = blockIdx.x * blockDim.x + threadIdx.x; 
 
@@ -346,25 +298,57 @@ __global__ void destTransformCUDA(float* __restrict__ M, float* __restrict__ Y, 
   }
 }
 
-ALWAYS_INLINE void destTransform(float* __restrict__ M, float* __restrict__ Y, int simdDimSize) {
-  // for (int octile = 0; octile < simdDimSize; octile += FP32_PER_REG)
-  destTransformCUDA<<<1, 256>>>(M, Y, simdDimSize);
-  HANDLER_ERROR_MSG("kernel panic!!!");
+__global__ void filterOcIcPack(float* __restrict__ filter, FltShape fs, float* __restrict__ packedFilter) {
+  for(int h = 0; h < FLT_HW; ++h)
+    for(int w = 0; w < FLT_HW; ++w)
+      for(int k = blockIdx.x * blockDim.x + threadIdx.x; 
+          k < fs.oc; 
+          k += blockDim.x * gridDim.x) {
+        for(int c = blockIdx.y * blockDim.y + threadIdx.y;
+            c < fs.ic; 
+            c += blockDim.y * gridDim.y){ 
+          packedFilter[h * fs.w * fs.oc * fs.ic + w * fs.oc * fs.ic + k * fs.ic + c] 
+              = filter[k * fs.ic * fs.h * fs.w + c * fs.h * fs.w + h * fs.w + w];
+        }
+      }
 }
 
-ALWAYS_INLINE void destStore(float* __restrict__ Y, float* __restrict__ out, OutShape os,  TileShape ts) {
-  typedef float (*YTensor_t) [TILE_IN_W][os.oc][ts.numTileTotal];
-  typedef float (*outTensor_t) [os.oc][os.h][os.w];
-  YTensor_t YTensor = (YTensor_t) Y;
-  outTensor_t outTensor = (outTensor_t) out;
+__global__ void ImageTileIcPack(float* __restrict__ image, ImgShape is,  float* __restrict__ packedImage,  TileShape ts) {
+  for(int tile = blockIdx.x * blockDim.x + threadIdx.x; 
+      tile < ts.numTileTotal; 
+      tile += blockDim.x * gridDim.x) {
+    for(int ic = blockIdx.y * blockDim.y + threadIdx.y;
+        ic < is.ic;
+        ic += blockDim.y * gridDim.y) {
+      for(int h = 0; h < TILE_IN_H; ++h) {
+        for(int w = 0; w < TILE_IN_W; ++w) {
+          TileIndex ti = getTileIndex(tile, ts);
+          int b = ti.b, x = ti.tw, y = ti.th;
+          if(y * 4 + h < is.h && x * 4 + w < is.w)
+            packedImage[h * TILE_IN_W * ts.numTileTotal * is.ic + w * ts.numTileTotal * is.ic + tile * is.ic + ic] 
+              = image[b * is.ic * is.h * is.w + ic * is.h * is.w + (y * 4 + h) * is.w + (x * 4 + w)];
+          else
+            packedImage[h * TILE_IN_W * ts.numTileTotal * is.ic + w * ts.numTileTotal * is.ic + tile * is.ic + ic] = 0;
+        }
+      }
+    }
+  }
+}
+
+__global__ void destStore(float* __restrict__ Y, float* __restrict__ out, OutShape os,  TileShape ts) {
   for(int h = 0; h < TILE_OUT_H; ++h)
     for(int w = 0; w < TILE_OUT_W; ++w)
-      for(int k = 0; k < os.oc; ++k)
-        for(int b = 0; b < ts.numTileTotal; ++b) {
+      for(int k = blockIdx.x * blockDim.x + threadIdx.x; 
+          k < os.oc; 
+          k += blockDim.x * gridDim.x)
+        for(int b = blockIdx.y * blockDim.y + threadIdx.y;
+            b < ts.numTileTotal; 
+            b += blockDim.y * gridDim.y) {
           TileIndex ti = getTileIndex(b, ts);
           int n = ti.b, x = ti.tw, y = ti.th;
           if(y * 4 + h < os.h && x * 4 + w < os.w) 
-            outTensor[n][k][y * 4 + h][x * 4 + w] = YTensor[h][w][k][b];
+            out[n * os.oc * os.h * os.w + k * os.h * os.w + (y * 4 + h) * os.w + (x * 4 + w)] 
+              = Y[h * TILE_IN_W * os.oc * ts.numTileTotal + w * os.oc * ts.numTileTotal + k * ts.numTileTotal + b];
         }
 }
 
@@ -382,47 +366,52 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   UShape    us = getUShape(fs);
   VShape    vs = getVShape(is, ts);
 
-  float* packedFilter =  (float*)  aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * FLT_H * FLT_W * us.oc * us.ic);
-  assert(packedFilter != NULL);
+  float *image_d, *filter_d;
+  HANDLER_ERROR_ERR(cudaMalloc(&image_d, sizeof(float) * is.numImg * is.ic * is.h * is.w));
+  HANDLER_ERROR_ERR(cudaMalloc(&filter_d, sizeof(float) * fs.oc * fs.ic * fs.h * fs.w));
 
-  float* packedImage =  (float*)   aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * TILE_IN_H * TILE_IN_H * vs.numTileTotal * vs.ic);
-  assert(packedImage  != NULL);
+  float *packedFilter_d, *packedImage_d;
+  HANDLER_ERROR_ERR(cudaMalloc(&packedFilter_d, sizeof(float) * FLT_H * FLT_W * us.oc * us.ic));
+  HANDLER_ERROR_ERR(cudaMalloc(&packedImage_d , sizeof(float) * TILE_IN_H * TILE_IN_H * vs.numTileTotal * vs.ic));
 
-  float* packedFilterDevice, *packedImageDevice;
-  HANDLER_ERROR_ERR(cudaMalloc(&packedFilterDevice, sizeof(float) * FLT_H * FLT_W * us.oc * us.ic));
-  HANDLER_ERROR_ERR(cudaMalloc(&packedImageDevice , sizeof(float) * TILE_IN_H * TILE_IN_H * vs.numTileTotal * vs.ic)); 
+  float *U_d, *V_d;
+  HANDLER_ERROR_ERR(cudaMalloc(&U_d, sizeof(float) * TILE_IN_H * TILE_IN_W * us.oc * us.ic));
+  HANDLER_ERROR_ERR(cudaMalloc(&V_d, sizeof(float) * TILE_IN_H * TILE_IN_W * vs.numTileTotal * vs.ic)); 
 
-  float * U, * V;
-  HANDLER_ERROR_ERR(cudaMalloc(&U, sizeof(float) * TILE_IN_H * TILE_IN_W * us.oc * us.ic));
-  HANDLER_ERROR_ERR(cudaMalloc(&V, sizeof(float) * TILE_IN_H * TILE_IN_W * vs.numTileTotal * vs.ic)); 
+  float *M_d;
+  HANDLER_ERROR_ERR(cudaMalloc(&M_d, sizeof(float) * TILE_IN_H  * TILE_IN_W  * us.oc * vs.numTileTotal));
 
-  typedef float (*UTensor_t) [TILE_IN_W][     us.oc     ][us.ic];
-  typedef float (*VTensor_t) [TILE_IN_W][vs.numTileTotal][vs.ic];
-  UTensor_t UTensor = (UTensor_t) U;
-  VTensor_t VTensor = (VTensor_t) V;
+  float *Y_d;
+  HANDLER_ERROR_ERR(cudaMalloc(&Y_d, sizeof(float) * TILE_OUT_H * TILE_IN_W  * us.oc * vs.numTileTotal));
+  
+  float *out_d;
+  HANDLER_ERROR_ERR(cudaMalloc(&out_d, sizeof(float) * os.numImg * os.oc * os.h * os.w));
 
-  filterOcIcPack  (filter, fs, packedFilter   );
-  ImageTileIcPack (image , is, packedImage, ts);
+  HANDLER_ERROR_ERR(cudaMemcpy(image_d, image, sizeof(float) * is.numImg * is.ic * is.h * is.w, cudaMemcpyHostToDevice));
+  HANDLER_ERROR_ERR(cudaMemcpy(filter_d, filter, sizeof(float) * fs.oc * fs.ic * fs.h * fs.w, cudaMemcpyHostToDevice));
 
+  filterOcIcPack<<<100, 256>>>(filter_d, fs, packedFilter_d);
+  HANDLER_ERROR_MSG("kernel panic!!!");
 
-  HANDLER_ERROR_ERR(cudaMemcpy(packedFilterDevice, packedFilter, sizeof(float) * FLT_H * FLT_W * fs.oc * fs.ic, cudaMemcpyHostToDevice));
-  HANDLER_ERROR_ERR(cudaMemcpy(packedImageDevice,  packedImage, sizeof(float) * TILE_IN_H * TILE_IN_H * vs.numTileTotal * vs.ic, cudaMemcpyHostToDevice));
-
-  srcTransform(packedImageDevice, V, vs);
-  filterTransform(packedFilterDevice, U, us);
-
-  float *M, *Y, *YHost; 
-  HANDLER_ERROR_ERR(cudaMalloc(&M, sizeof(float) * TILE_IN_H  * TILE_IN_W  * us.oc * vs.numTileTotal));
-  HANDLER_ERROR_ERR(cudaMalloc(&Y, sizeof(float) * TILE_OUT_H * TILE_IN_W  * us.oc * vs.numTileTotal));
-  YHost = (float*) aligned_alloc(ALLOC_ALIGNMENT, sizeof(float) * TILE_OUT_H * TILE_IN_W * vs.numTileTotal * us.oc);
-  typedef float (*MTensor_t) [TILE_IN_W][us.oc][vs.numTileTotal];
-  typedef float (*YTensor_t) [TILE_IN_W][us.oc][vs.numTileTotal];
-  MTensor_t MTensor = (MTensor_t) M;
-
+  ImageTileIcPack<<<100, 256>>>(image_d, is, packedImage_d, ts);
+  HANDLER_ERROR_MSG("kernel panic!!!");
+  
+  srcTransform<<<100, 256>>>(packedImage_d, V_d, vs, vs.ic * vs.numTileTotal);
+  HANDLER_ERROR_MSG("kernel panic!!!");
+  
+  filterTransform<<<100, 256>>>(packedFilter_d, U_d, us, us.ic * us.oc);
+  HANDLER_ERROR_MSG("kernel panic!!!");
+  
   cublasHandle_t handle;
   cublasCreate(&handle);
   float alpha = 1.0f, beta = 0.0f;
   for(int i = 0; i < TILE_IN_H * TILE_IN_W; ++i) {
+    typedef float (*UTensor_t) [TILE_IN_W][     us.oc     ][us.ic];
+    typedef float (*VTensor_t) [TILE_IN_W][vs.numTileTotal][vs.ic];
+    typedef float (*MTensor_t) [TILE_IN_W][us.oc][vs.numTileTotal];
+    UTensor_t UTensor = (UTensor_t) U_d;
+    VTensor_t VTensor = (VTensor_t) V_d;
+    MTensor_t MTensor = (MTensor_t) M_d;
     cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N,
                 vs.numTileTotal, us.oc, us.ic,
                 &alpha,
@@ -434,22 +423,23 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
                 (float*)(MTensor[i/TILE_IN_W][i%TILE_IN_W]),
                 vs.numTileTotal);
   }
-
   cublasDestroy(handle);
 
-  destTransform((float *)M, (float *)Y, us.oc * vs.numTileTotal);
+  destTransform<<<100, 256>>>(M_d, Y_d, us.oc * vs.numTileTotal);
+  HANDLER_ERROR_MSG("kernel panic!!!");
 
-  cudaMemcpy(YHost, Y, sizeof(float) * TILE_OUT_H * TILE_IN_W * us.oc * vs.numTileTotal, cudaMemcpyDeviceToHost);
+  destStore<<<100, 256>>>(Y_d, out_d, os, ts);
+  HANDLER_ERROR_MSG("kernel panic!!!");
 
-  destStore(YHost, out, os, ts);
+  HANDLER_ERROR_ERR(cudaMemcpy(out, out_d, sizeof(float) * os.numImg * os.oc * os.h * os.w, cudaMemcpyDeviceToHost));
 
-  cudaFree(U);
-  cudaFree(V);
-  cudaFree(packedImageDevice);
-  cudaFree(packedFilterDevice);
-  cudaFree(M);
-  cudaFree(Y);
-  free(packedImage);
-  free(packedFilter);
-  free(YHost);
+  cudaFree(image_d);
+  cudaFree(filter_d);
+  cudaFree(packedImage_d);
+  cudaFree(packedFilter_d);
+  cudaFree(U_d);
+  cudaFree(V_d);
+  cudaFree(M_d);
+  cudaFree(Y_d);
+  cudaFree(out_d);
 }

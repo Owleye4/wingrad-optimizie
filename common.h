@@ -1,11 +1,9 @@
 #pragma once
-// #include <arm_sve.h>
 #include <time.h>
 #include <assert.h>
 #include <sys/time.h>
 #include <omp.h>
 #include <stdint.h>
-#include "sve2avx.h"
 
 #define PRAGMA(X) _Pragma(#X)
 #define OMP
@@ -95,14 +93,13 @@
 
 #define ALWAYS_INLINE inline __attribute__((always_inline))
 
-
 ALWAYS_INLINE double timestamp() {
   struct timeval tv;
   gettimeofday(&tv, 0);
   return tv.tv_sec * 1.0e3 + tv.tv_usec * 1.e-3;
 }
-double times_ms[10];
-double start_time;
+static double times_ms[10];
+static double start_time;
 
 // const int64_t k_blk_size = 64;
 // const int64_t c_blk_size = 32;
@@ -159,7 +156,7 @@ typedef struct {
   int64_t w;
 } TileShape;
 
-OutShape getOutShape(ImgShape is, FltShape fs) {
+inline OutShape getOutShape(ImgShape is, FltShape fs) {
   OutShape os;
   os.numImg = is.numImg;
   os.oc = fs.oc;
@@ -168,7 +165,7 @@ OutShape getOutShape(ImgShape is, FltShape fs) {
   return os;
 }
 
-TileShape getTileShape(ImgShape is, OutShape os) {
+inline TileShape getTileShape(ImgShape is, OutShape os) {
   TileShape ts;
   ts.h = DIV_UP(os.h, TILE_OUT_H);
   ts.w = DIV_UP(os.w, TILE_OUT_W);
@@ -178,7 +175,7 @@ TileShape getTileShape(ImgShape is, OutShape os) {
   return ts;
 }
 
-UShape getUShape(FltShape fs) {
+inline UShape getUShape(FltShape fs) {
   UShape us;
   us.oc = fs.oc;
   us.ic = fs.ic;
@@ -187,7 +184,7 @@ UShape getUShape(FltShape fs) {
   return us;
 }
 
-VShape getVShape(ImgShape is, TileShape ts) {
+inline VShape getVShape(ImgShape is, TileShape ts) {
   VShape vs;
   vs.numTileTotal = ts.numTileTotal;
   vs.ic = is.ic;
@@ -196,7 +193,7 @@ VShape getVShape(ImgShape is, TileShape ts) {
   return vs;
 }
 
-TileIndex getTileIndex(int64_t tileNo, TileShape ts) {
+__device__ __host__ TileIndex getTileIndex(int64_t tileNo, TileShape ts) {
   TileIndex ti;
   ti.b = tileNo / ts.numTilePerImg;
   tileNo = tileNo % ts.numTilePerImg;
@@ -213,7 +210,7 @@ typedef struct {   // Interval which is [start, end)
 } Interval;
 
 
-Interval newInterval(int64_t start, int64_t end) {
+inline Interval newInterval(int64_t start, int64_t end) {
 	Interval it;
 	it.start = start;
 	it.end = end;
@@ -221,7 +218,7 @@ Interval newInterval(int64_t start, int64_t end) {
   return it;
 }
 
-Interval newIntervalWithUpperBound(int64_t start, int64_t step, int64_t upperBound) {
+inline Interval newIntervalWithUpperBound(int64_t start, int64_t step, int64_t upperBound) {
 	Interval it;
 	it.start = start;
 	it.end = MIN(start + step, upperBound);
