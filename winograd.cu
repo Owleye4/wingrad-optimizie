@@ -390,10 +390,10 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   HANDLER_ERROR_ERR(cudaMemcpy(image_d, image, sizeof(float) * is.numImg * is.ic * is.h * is.w, cudaMemcpyHostToDevice));
   HANDLER_ERROR_ERR(cudaMemcpy(filter_d, filter, sizeof(float) * fs.oc * fs.ic * fs.h * fs.w, cudaMemcpyHostToDevice));
 
-  filterOcIcPack<<<100, 256>>>(filter_d, fs, packedFilter_d);
+  filterOcIcPack<<<dim3(10, 10), dim3(16, 16)>>>(filter_d, fs, packedFilter_d);
   HANDLER_ERROR_MSG("kernel panic!!!");
 
-  ImageTileIcPack<<<100, 256>>>(image_d, is, packedImage_d, ts);
+  ImageTileIcPack<<<dim3(10, 10), dim3(16, 16)>>>(image_d, is, packedImage_d, ts);
   HANDLER_ERROR_MSG("kernel panic!!!");
   
   srcTransform<<<100, 256>>>(packedImage_d, V_d, vs, vs.ic * vs.numTileTotal);
@@ -428,7 +428,7 @@ void winconv_2x3(float *__restrict__ image, const int inHeight,
   destTransform<<<100, 256>>>(M_d, Y_d, us.oc * vs.numTileTotal);
   HANDLER_ERROR_MSG("kernel panic!!!");
 
-  destStore<<<100, 256>>>(Y_d, out_d, os, ts);
+  destStore<<<dim3(10, 10), dim3(16, 16)>>>(Y_d, out_d, os, ts);
   HANDLER_ERROR_MSG("kernel panic!!!");
 
   HANDLER_ERROR_ERR(cudaMemcpy(out, out_d, sizeof(float) * os.numImg * os.oc * os.h * os.w, cudaMemcpyDeviceToHost));
