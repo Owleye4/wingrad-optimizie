@@ -7,13 +7,10 @@
 
 #define FLT_H 3L
 #define FLT_W 3L
-#define FLT_HW 3L
 
-#define TILE_IN_HW 6L
 #define TILE_IN_H 6L
 #define TILE_IN_W 6L
 
-#define TILE_OUT_HW 4L
 #define TILE_OUT_H 4L
 #define TILE_OUT_W 4L
 
@@ -94,6 +91,10 @@ typedef struct {
   int64_t num_tiles_total; /**< The total number of tiles. */
   int64_t tiles_on_h; /**< The number of tiles on the height dimension. */
   int64_t tiles_on_w; /**< The number of tiles on the width dimension. */
+  int64_t tile_in_h; /**< The height of the input tile. */
+  int64_t tile_in_w; /**< The width of the input tile. */
+  int64_t tile_out_h; /**< The height of the output tile. */
+  int64_t tile_out_w; /**< The width of the output tile. */
 } tiling_info_t;
 
 inline out_shape_t get_output_shape(image_shape_t is, filter_shape_t fs) {
@@ -112,6 +113,10 @@ inline tiling_info_t get_tiling_info(image_shape_t is, out_shape_t os) {
   ts.bs = is.bs;
   ts.num_tile_per_image = ts.tiles_on_h * ts.tiles_on_w;
   ts.num_tiles_total = ts.num_tile_per_image * ts.bs;
+  ts.tile_in_h = TILE_IN_H;
+  ts.tile_in_w = TILE_IN_W;
+  ts.tile_out_h = TILE_OUT_H;
+  ts.tile_out_w = TILE_OUT_W;
   return ts;
 }
 
@@ -133,11 +138,11 @@ inline V_shape_t get_V_shape(image_shape_t is, tiling_info_t ts) {
   return vs;
 }
 
-tile_index_t get_tile_index(int64_t tileNo, tiling_info_t ts) {
+inline tile_index_t get_tile_index(int64_t tile, tiling_info_t ts) {
   tile_index_t ti;
-  ti.b = tileNo / ts.num_tile_per_image;
-  tileNo = tileNo % ts.num_tile_per_image;
-  ti.th = tileNo / ts.tiles_on_w;
-  ti.tw = tileNo % ts.tiles_on_w;
+  ti.b = tile / ts.num_tile_per_image;
+  tile = tile % ts.num_tile_per_image;
+  ti.th = tile / ts.tiles_on_w;
+  ti.tw = tile % ts.tiles_on_w;
   return ti;
 }
