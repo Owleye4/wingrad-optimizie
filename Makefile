@@ -1,4 +1,4 @@
-CFLAG_OPT = -O3
+CFLAG = -O3 -g -Wall -fsanitize=address -fopenmp
 
 all:
-	nvcc -std=c++11 -O3 -g driver.cc winograd.cu -o winograd ${CFLAG_OPT} -lcublas
+	g++ driver.cc winograd.cc -std=c++11 ${CFLAG} -o winograd
