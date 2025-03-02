@@ -51,15 +51,14 @@ typedef struct {
   int64_t w;  /**< The width of the image. */
 } image_shape_t;
 
-
 /**
  * @brief Represents the shape of a U matrix.
  */
 typedef struct {
-  int64_t oc;
-  int64_t ic;
-  int64_t h;
-  int64_t w;
+  int64_t oc; /**< The number of output channels. */
+  int64_t ic; /**< The number of input channels. */
+  int64_t h;  /**< The height of the tensor. */
+  int64_t w;  /**< The width of the tensor. */
 } U_shape_t;
 
 /**
@@ -67,34 +66,34 @@ typedef struct {
  */
 typedef struct {
   int64_t num_tiles; /**< The number of tiles total. */
-  int64_t ic; /**< The number of input channels. */
-  int64_t h; /**< The height of the tensor. */
-  int64_t w; /**< The width of the tensor. */
+  int64_t ic;        /**< The number of input channels. */
+  int64_t h;         /**< The height of the tensor. */
+  int64_t w;         /**< The width of the tensor. */
 } V_shape_t;
 
 /**
  * @brief Represents the output shape of a computation.
  */
 typedef struct {
-  int64_t bs;
-  int64_t oc;
-  int64_t h;
-  int64_t w;
+  int64_t bs; /**< The batch size. */
+  int64_t oc; /**< The number of output channels. */
+  int64_t h;  /**< The height of the output image. */
+  int64_t w;  /**< The width of the output image. */
 } out_shape_t;
 
 /**
  * @brief Structure representing tiling information.
  */
 typedef struct {
-  int64_t bs; /**< The batch size. */
+  int64_t bs;                 /**< The batch size. */
   int64_t num_tile_per_image; /**< The number of tiles per image. */
-  int64_t num_tiles_total; /**< The total number of tiles. */
-  int64_t tiles_on_h; /**< The number of tiles on the height dimension. */
-  int64_t tiles_on_w; /**< The number of tiles on the width dimension. */
-  int64_t tile_in_h; /**< The height of the input tile. */
-  int64_t tile_in_w; /**< The width of the input tile. */
-  int64_t tile_out_h; /**< The height of the output tile. */
-  int64_t tile_out_w; /**< The width of the output tile. */
+  int64_t num_tiles;          /**< The total number of tiles. */
+  int64_t tiles_on_h;         /**< The number of tiles on the height dimension. */
+  int64_t tiles_on_w;         /**< The number of tiles on the width dimension. */
+  int64_t tile_in_h;          /**< The height of the input tile. */
+  int64_t tile_in_w;          /**< The width of the input tile. */
+  int64_t tile_out_h;         /**< The height of the output tile. */
+  int64_t tile_out_w;         /**< The width of the output tile. */
 } tiling_info_t;
 
 inline out_shape_t get_output_shape(image_shape_t is, filter_shape_t fs) {
@@ -112,7 +111,7 @@ inline tiling_info_t get_tiling_info(image_shape_t is, out_shape_t os) {
   ts.tiles_on_w = DIV_UP(os.w, TILE_OUT_W);
   ts.bs = is.bs;
   ts.num_tile_per_image = ts.tiles_on_h * ts.tiles_on_w;
-  ts.num_tiles_total = ts.num_tile_per_image * ts.bs;
+  ts.num_tiles = ts.num_tile_per_image * ts.bs;
   ts.tile_in_h = TILE_IN_H;
   ts.tile_in_w = TILE_IN_W;
   ts.tile_out_h = TILE_OUT_H;
@@ -131,7 +130,7 @@ inline U_shape_t get_U_shape(filter_shape_t fs) {
 
 inline V_shape_t get_V_shape(image_shape_t is, tiling_info_t ts) {
   V_shape_t vs;
-  vs.num_tiles = ts.num_tiles_total;
+  vs.num_tiles = ts.num_tiles;
   vs.ic = is.ic;
   vs.h = TILE_IN_H;
   vs.w = TILE_IN_W;
