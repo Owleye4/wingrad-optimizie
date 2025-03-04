@@ -55,20 +55,20 @@ typedef struct {
  * @brief Represents the shape of a U matrix.
  */
 typedef struct {
-  int64_t oc; /**< The number of output channels. */
-  int64_t ic; /**< The number of input channels. */
   int64_t h;  /**< The height of the tensor. */
   int64_t w;  /**< The width of the tensor. */
+  int64_t oc; /**< The number of output channels. */
+  int64_t ic; /**< The number of input channels. */
 } U_shape_t;
 
 /**
  * @brief Structure representing the shape of a V tensor.
  */
 typedef struct {
-  int64_t num_tiles; /**< The number of tiles total. */
-  int64_t ic;        /**< The number of input channels. */
   int64_t h;         /**< The height of the tensor. */
   int64_t w;         /**< The width of the tensor. */
+  int64_t num_tiles; /**< The number of tiles total. */
+  int64_t ic;        /**< The number of input channels. */
 } V_shape_t;
 
 /**
@@ -119,21 +119,21 @@ inline tiling_info_t get_tiling_info(image_shape_t is, out_shape_t os) {
   return ts;
 }
 
-inline U_shape_t get_U_shape(filter_shape_t fs) {
+inline U_shape_t get_U_shape(filter_shape_t fs, tiling_info_t ti) {
   U_shape_t us;
   us.oc = fs.oc;
   us.ic = fs.ic;
-  us.h = TILE_IN_W;
-  us.w = TILE_IN_W;
+  us.h = ti.tile_in_h;
+  us.w = ti.tile_in_w;
   return us;
 }
 
-inline V_shape_t get_V_shape(image_shape_t is, tiling_info_t ts) {
+inline V_shape_t get_V_shape(image_shape_t is, tiling_info_t ti) {
   V_shape_t vs;
-  vs.num_tiles = ts.num_tiles;
+  vs.num_tiles = ti.num_tiles;
   vs.ic = is.ic;
-  vs.h = TILE_IN_H;
-  vs.w = TILE_IN_W;
+  vs.h = ti.tile_in_h;
+  vs.w = ti.tile_in_w;
   return vs;
 }
 

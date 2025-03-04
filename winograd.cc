@@ -9,16 +9,17 @@
 void image_transform(float *__restrict__ packed_image,
                      float *__restrict__ V,
                      const V_shape_t vs,
+                     const tiling_info_t ti,
                      const int64_t collapsed_dim_size) {
-  typedef float(*packed_image_tensor_t)[TILE_IN_W][collapsed_dim_size];
-  typedef float(*V_tensor_t)[TILE_IN_W][collapsed_dim_size];
+  typedef float(*packed_image_tensor_t)[ti.tile_in_w][collapsed_dim_size];
+  typedef float(*V_tensor_t)[ti.tile_in_w][collapsed_dim_size];
   packed_image_tensor_t packed_image_tensor = (packed_image_tensor_t)packed_image;
   V_tensor_t V_tensor = (V_tensor_t)V;
 
   float z0, z1, z2, z3, z4, z5, z6;
 #pragma omp parallel for private(z0, z1, z2, z3, z4, z5, z6)
   for (int64_t idx = 0; idx < collapsed_dim_size; idx++) {
-    for (int64_t w = 0; w < TILE_IN_W; ++w) {
+    for (int64_t w = 0; w < ti.tile_in_w; ++w) {
       z6 = packed_image_tensor[0][w][idx];
 
       z0 = 4.0f * z6;
@@ -67,7 +68,7 @@ void image_transform(float *__restrict__ packed_image,
       V_tensor[5][w][idx] = z5;
     }
 
-    for (int64_t h = 0; h < TILE_IN_H; ++h) {
+    for (int64_t h = 0; h < ti.tile_in_h; ++h) {
       z6 = V_tensor[h][0][idx];
 
       z0 = 4.0f * z6;
@@ -198,9 +199,9 @@ void filter_transform(float *__restrict__ packed_filter,
 }
 
 void output_transform(float *__restrict__ M,
-                    float *__restrict__ Y,
-                    const tiling_info_t ti,
-                    const int64_t collapsed_dim_size) {
+                      float *__restrict__ Y,
+                      const tiling_info_t ti,
+                      const int64_t collapsed_dim_size) {
   typedef float(*M_tensor_t)[ti.tile_in_w][collapsed_dim_size];
   typedef float(*Y_tensor_t)[ti.tile_in_w][collapsed_dim_size];
   M_tensor_t M_tensor = (M_tensor_t)M;
@@ -304,7 +305,7 @@ void image_packing(float *__restrict__ image,
                    float *__restrict__ packed_image,
                    const image_shape_t is,
                    const tiling_info_t ti) {
-  typedef float(*packedImage_tensor_t)[TILE_IN_W][ti.num_tiles][is.ic];
+  typedef float(*packedImage_tensor_t)[ti.tile_in_w][ti.num_tiles][is.ic];
   typedef float(*image_tensor_t)[is.ic][is.h][is.w];
   packedImage_tensor_t packed_image_tensor = (packedImage_tensor_t)packed_image;
   image_tensor_t image_tensor = (image_tensor_t)image;
@@ -312,8 +313,8 @@ void image_packing(float *__restrict__ image,
 #pragma omp parallel for collapse(3)
   for (int64_t tile = 0; tile < ti.num_tiles; tile++) {
     for (int64_t ic = 0; ic < is.ic; ic++) {
-      for (int64_t h = 0; h < TILE_IN_H; ++h) {
-        for (int64_t w = 0; w < TILE_IN_W; ++w) {
+      for (int64_t h = 0; h < ti.tile_in_h; ++h) {
+        for (int64_t w = 0; w < ti.tile_in_w; ++w) {
           tile_index_t tidx = get_tile_index(tile, ti);
           int64_t batch = tidx.b, ww = tidx.tw, hh = tidx.th;
           if (hh * 4 + h < is.h && ww * 4 + w < is.w)
@@ -327,15 +328,15 @@ void image_packing(float *__restrict__ image,
 }
 
 void output_unpacking_store(float *__restrict__ Y,
-                          float *__restrict__ out,
-                          const out_shape_t os,
-                          const tiling_info_t ti) {
-  typedef float(*Y_tensor_t)[TILE_IN_W][os.oc][ti.num_tiles];
+                            float *__restrict__ out,
+                            const out_shape_t os,
+                            const tiling_info_t ti) {
+  typedef float(*Y_tensor_t)[ti.tile_in_w][os.oc][ti.num_tiles];
   typedef float(*out_tensor_t)[os.oc][os.h][os.w];
   Y_tensor_t Y_tensor = (Y_tensor_t)Y;
   out_tensor_t out_tensor = (out_tensor_t)out;
 
-  #pragma omp parallel for collapse(3)
+#pragma omp parallel for collapse(3)
   for (int64_t h = 0; h < ti.tile_out_h; ++h) {
     for (int64_t w = 0; w < ti.tile_out_w; ++w) {
       for (int64_t oc = 0; oc < os.oc; oc++) {
@@ -383,7 +384,7 @@ void winograd_convolution(
   const filter_shape_t fs = {.oc = output_channel_num, .ic = input_channel_num, .h = FLT_H, .w = FLT_W};
   const out_shape_t os = get_output_shape(is, fs);
   const tiling_info_t ti = get_tiling_info(is, os);
-  const U_shape_t us = get_U_shape(fs);
+  const U_shape_t us = get_U_shape(fs, ti);
   const V_shape_t vs = get_V_shape(is, ti);
 
   float *packed_filter = (float *)malloc(sizeof(float) * fs.h * fs.w * fs.oc * fs.ic);
@@ -397,7 +398,7 @@ void winograd_convolution(
   filter_transform(packed_filter, U, fs, us, us.oc * us.ic);
 
   image_packing(image, packed_image, is, ti);
-  image_transform(packed_image, V, vs, vs.ic * vs.num_tiles);
+  image_transform(packed_image, V, vs, ti, vs.ic * vs.num_tiles);
 
   for (int64_t h = 0; h < ti.tile_in_h; ++h) {
     for (int64_t w = 0; w < ti.tile_in_w; ++w) {
