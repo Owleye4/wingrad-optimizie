@@ -338,7 +338,6 @@ void output_unpacking_store(float *__restrict__ Y,
   typedef float(*out_tensor_t)[os.oc][os.h][os.w];
   Y_tensor_t Y_tensor = (Y_tensor_t)Y;
   out_tensor_t out_tensor = (out_tensor_t)out;
-
 #pragma omp parallel for collapse(3)
   for (int64_t h = 0; h < ti.tile_out_h; ++h) {
     for (int64_t w = 0; w < ti.tile_out_w; ++w) {
@@ -348,6 +347,47 @@ void output_unpacking_store(float *__restrict__ Y,
           int64_t batch = tidx.b, ww = tidx.tw, hh = tidx.th;
           if (hh * 4 + h < os.h && ww * 4 + w < os.w)
             out_tensor[batch][oc][(hh * 4 + h)][(ww * 4 + w)] = Y_tensor[h][w][oc][tile];
+        }
+      }
+    }
+  }
+}
+
+void output_unpacking_store_avx2(float *__restrict__ Y,
+                                 float *__restrict__ out,
+                                 const out_shape_t os,
+                                 const tiling_info_t ti) {
+  typedef float(*Y_tensor_t)[ti.tile_in_w][os.oc][ti.num_tiles];
+  typedef float(*out_tensor_t)[os.oc][os.h][os.w];
+  Y_tensor_t Y_tensor = (Y_tensor_t)Y;
+  out_tensor_t out_tensor = (out_tensor_t)out;
+#pragma omp parallel for collapse(3)
+  for (int64_t h = 0; h < ti.tile_out_h; ++h) {
+    for (int64_t oc = 0; oc < os.oc; ++oc) {
+      for (int64_t tile = 0; tile < ti.num_tiles; ++tile) {
+        tile_index_t tidx = get_tile_index(tile, ti);
+        int64_t batch = tidx.b, ww = tidx.tw, hh = tidx.th;
+
+        int64_t w_vec = 0;
+        for (; w_vec <= ti.tile_out_w - 8; w_vec += 8) {
+          if (hh * 4 + h < os.h && ww * 4 + w_vec + 7 < os.w) { 
+            __m256 y_vec = _mm256_loadu_ps(&Y_tensor[h][w_vec][oc][tile]);
+            float *out_ptr = &out_tensor[batch][oc][(hh * 4 + h)][(ww * 4 + w_vec)];
+            _mm256_storeu_ps(out_ptr, y_vec);
+          } 
+          else {
+            for (int i = 0; i < 8; ++i) {
+              if (hh * 4 + h < os.h && ww * 4 + w_vec + i < os.w) {
+                out_tensor[batch][oc][(hh * 4 + h)][(ww * 4 + w_vec + i)] = Y_tensor[h][w_vec + i][oc][tile];
+              }
+            }
+          }
+        }
+        
+        for (; w_vec < ti.tile_out_w; ++w_vec) {
+          if (hh * 4 + h < os.h && ww * 4 + w_vec < os.w){
+            out_tensor[batch][oc][(hh * 4 + h)][(ww * 4 + w_vec)] = Y_tensor[h][w_vec][oc][tile];
+          }
         }
       }
     }
@@ -395,7 +435,7 @@ void sgemm_avx2_tiled(const int64_t M, const int64_t N, const int64_t K, float *
 
           for (int64_t k_block = 0; k_block < K; k_block += K_BLOCK) {
             int64_t k = k_block;
-            int64_t k_end = std::min(k_block + K_BLOCK, K); // 计算当前 K 块的结束位置
+            int64_t k_end = std::min(k_block + K_BLOCK, K);
 
             for (; k <= k_end - 8; k += 8) {
               __m256 a_vec = _mm256_load_ps(&A_tensor[m][k]);
@@ -471,7 +511,7 @@ void winograd_convolution(
   }
 
   output_transform(M, Y, ti, us.oc * vs.num_tiles);
-  output_unpacking_store(Y, out, os, ti);
+  output_unpacking_store_avx2(Y, out, os, ti);
 
   free(packed_filter);
   free(packed_image);
