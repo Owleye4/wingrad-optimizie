@@ -371,9 +371,9 @@ void output_unpacking_store_avx2(float *__restrict__ Y,
         int64_t w_vec = 0;
         for (; w_vec <= ti.tile_out_w - 8; w_vec += 8) {
           if (hh * 4 + h < os.h && ww * 4 + w_vec + 7 < os.w) { 
-            __m256 y_vec = _mm256_loadu_ps(&Y_tensor[h][w_vec][oc][tile]);
+            __m256 y_vec = _mm256_load_ps(&Y_tensor[h][w_vec][oc][tile]);
             float *out_ptr = &out_tensor[batch][oc][(hh * 4 + h)][(ww * 4 + w_vec)];
-            _mm256_storeu_ps(out_ptr, y_vec);
+            _mm256_store_ps(out_ptr, y_vec);
           } 
           else {
             for (int i = 0; i < 8; ++i) {
