@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
+#include <immintrin.h>
+#include <fmaintrin.h>
 
 #include "utils.h"
 
@@ -370,6 +373,41 @@ void sgemm(const int64_t M, const int64_t N, const int64_t K, float *A, float *B
   }
 }
 
+void sgemm_avx2(const int64_t M, const int64_t N, const int64_t K, float *A, float *B, float *C) {
+  typedef float(*A_tensor_t)[K];
+  typedef float(*B_tensor_t)[K];
+  typedef float(*C_tensor_t)[M];
+  A_tensor_t A_tensor = (A_tensor_t)A;
+  B_tensor_t B_tensor = (B_tensor_t)B;
+  C_tensor_t C_tensor = (C_tensor_t)C;
+
+#pragma omp parallel for collapse(2)
+  for (int64_t n = 0; n < N; ++n) {
+    for (int64_t m = 0; m < M; ++m) {
+      float sum = 0.0f;
+      __m256 sum_vec = _mm256_setzero_ps();
+      int64_t k = 0;
+      for (; k <= K - 8; k += 8) {
+        __m256 a_vec = _mm256_loadu_ps(&A_tensor[m][k]);
+        __m256 b_vec = _mm256_loadu_ps(&B_tensor[n][k]);
+        // sum_vec = _mm256_add_ps(sum_vec, _mm256_mul_ps(a_vec, b_vec));
+        sum_vec = _mm256_fmadd_ps(a_vec, b_vec, sum_vec);
+      }
+      for (; k < K; ++k) {
+        sum += A_tensor[m][k] * B_tensor[n][k];
+      }
+
+      __m128 sum_128 = _mm_add_ps(_mm256_extractf128_ps(sum_vec, 0), _mm256_extractf128_ps(sum_vec, 1));
+      sum_128 = _mm_hadd_ps(sum_128, sum_128);
+      sum_128 = _mm_hadd_ps(sum_128, sum_128);
+      sum += _mm_cvtss_f32(sum_128);
+
+      C_tensor[n][m] = sum;
+    }
+  }
+}
+
+
 void winograd_convolution(
     float *__restrict__ image, /**< float [batch_num][input_channel_num][image_height][image_width] */
     const int image_height,
@@ -393,7 +431,6 @@ void winograd_convolution(
   float *V = (float *)malloc(sizeof(float) * ti.tile_in_h * ti.tile_in_w * vs.num_tiles * vs.ic);
   float *M = (float *)malloc(sizeof(float) * ti.tile_in_h * ti.tile_in_w * us.oc * vs.num_tiles);
   float *Y = (float *)malloc(sizeof(float) * ti.tile_out_h * ti.tile_in_w * os.oc * ti.num_tiles);
-
   filter_packing(filter, packed_filter, fs);
   filter_transform(packed_filter, U, fs, us, us.oc * us.ic);
 
@@ -408,7 +445,7 @@ void winograd_convolution(
       U_tensor_t U_tensor = (U_tensor_t)U;
       V_tensor_t V_tensor = (V_tensor_t)V;
       M_tensor_t M_tensor = (M_tensor_t)M;
-      sgemm(vs.num_tiles,
+      sgemm_avx2(vs.num_tiles,
             us.oc,
             us.ic,
             (float *)(V_tensor[h][w]),
