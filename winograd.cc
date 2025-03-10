@@ -388,15 +388,14 @@ void sgemm_avx2(const int64_t M, const int64_t N, const int64_t K, float *A, flo
       __m256 sum_vec = _mm256_setzero_ps();
       int64_t k = 0;
       for (; k <= K - 8; k += 8) {
-        __m256 a_vec = _mm256_loadu_ps(&A_tensor[m][k]);
-        __m256 b_vec = _mm256_loadu_ps(&B_tensor[n][k]);
+        __m256 a_vec = _mm256_load_ps(&A_tensor[m][k]);
+        __m256 b_vec = _mm256_load_ps(&B_tensor[n][k]);
         // sum_vec = _mm256_add_ps(sum_vec, _mm256_mul_ps(a_vec, b_vec));
         sum_vec = _mm256_fmadd_ps(a_vec, b_vec, sum_vec);
       }
       for (; k < K; ++k) {
         sum += A_tensor[m][k] * B_tensor[n][k];
       }
-
       __m128 sum_128 = _mm_add_ps(_mm256_extractf128_ps(sum_vec, 0), _mm256_extractf128_ps(sum_vec, 1));
       sum_128 = _mm_hadd_ps(sum_128, sum_128);
       sum_128 = _mm_hadd_ps(sum_128, sum_128);
@@ -406,7 +405,6 @@ void sgemm_avx2(const int64_t M, const int64_t N, const int64_t K, float *A, flo
     }
   }
 }
-
 
 void winograd_convolution(
     float *__restrict__ image, /**< float [batch_num][input_channel_num][image_height][image_width] */
@@ -425,12 +423,18 @@ void winograd_convolution(
   const U_shape_t us = get_U_shape(fs, ti);
   const V_shape_t vs = get_V_shape(is, ti);
 
-  float *packed_filter = (float *)malloc(sizeof(float) * fs.h * fs.w * fs.oc * fs.ic);
-  float *packed_image = (float *)malloc(sizeof(float) * ti.tile_in_h * ti.tile_in_w * ti.num_tiles * is.ic);
-  float *U = (float *)malloc(sizeof(float) * ti.tile_in_h * ti.tile_in_w * us.oc * us.ic);
-  float *V = (float *)malloc(sizeof(float) * ti.tile_in_h * ti.tile_in_w * vs.num_tiles * vs.ic);
-  float *M = (float *)malloc(sizeof(float) * ti.tile_in_h * ti.tile_in_w * us.oc * vs.num_tiles);
-  float *Y = (float *)malloc(sizeof(float) * ti.tile_out_h * ti.tile_in_w * os.oc * ti.num_tiles);
+  float *packed_filter = (float *)aligned_alloc(32, sizeof(float) * fs.h * fs.w * fs.oc * fs.ic);
+  float *packed_image = (float *)aligned_alloc(32, sizeof(float) * ti.tile_in_h * ti.tile_in_w * ti.num_tiles * is.ic);
+  float *U = (float *)aligned_alloc(32, sizeof(float) * ti.tile_in_h * ti.tile_in_w * us.oc * us.ic);
+  float *V = (float *)aligned_alloc(32, sizeof(float) * ti.tile_in_h * ti.tile_in_w * vs.num_tiles * vs.ic);
+  float *M = (float *)aligned_alloc(32, sizeof(float) * ti.tile_in_h * ti.tile_in_w * us.oc * vs.num_tiles);
+  float *Y = (float *)aligned_alloc(32, sizeof(float) * ti.tile_out_h * ti.tile_in_w * os.oc * ti.num_tiles);
+  
+  if (!packed_filter || !packed_image || !U || !V || !M || !Y) {
+    fprintf(stderr, "Memory allocation failed!\n");
+    exit(1); 
+  }
+
   filter_packing(filter, packed_filter, fs);
   filter_transform(packed_filter, U, fs, us, us.oc * us.ic);
 
