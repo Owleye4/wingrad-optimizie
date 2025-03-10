@@ -373,7 +373,7 @@ void sgemm(const int64_t M, const int64_t N, const int64_t K, float *A, float *B
   }
 }
 
-void sgemm_avx2(const int64_t M, const int64_t N, const int64_t K, float *A, float *B, float *C) {
+void sgemm_avx2_tiled(const int64_t M, const int64_t N, const int64_t K, float *A, float *B, float *C) {
   typedef float(*A_tensor_t)[K];
   typedef float(*B_tensor_t)[K];
   typedef float(*C_tensor_t)[M];
@@ -381,27 +381,39 @@ void sgemm_avx2(const int64_t M, const int64_t N, const int64_t K, float *A, flo
   B_tensor_t B_tensor = (B_tensor_t)B;
   C_tensor_t C_tensor = (C_tensor_t)C;
 
-#pragma omp parallel for collapse(2)
-  for (int64_t n = 0; n < N; ++n) {
-    for (int64_t m = 0; m < M; ++m) {
-      float sum = 0.0f;
-      __m256 sum_vec = _mm256_setzero_ps();
-      int64_t k = 0;
-      for (; k <= K - 8; k += 8) {
-        __m256 a_vec = _mm256_load_ps(&A_tensor[m][k]);
-        __m256 b_vec = _mm256_load_ps(&B_tensor[n][k]);
-        // sum_vec = _mm256_add_ps(sum_vec, _mm256_mul_ps(a_vec, b_vec));
-        sum_vec = _mm256_fmadd_ps(a_vec, b_vec, sum_vec);
-      }
-      for (; k < K; ++k) {
-        sum += A_tensor[m][k] * B_tensor[n][k];
-      }
-      __m128 sum_128 = _mm_add_ps(_mm256_extractf128_ps(sum_vec, 0), _mm256_extractf128_ps(sum_vec, 1));
-      sum_128 = _mm_hadd_ps(sum_128, sum_128);
-      sum_128 = _mm_hadd_ps(sum_128, sum_128);
-      sum += _mm_cvtss_f32(sum_128);
+  const int64_t M_BLOCK = 64;
+  const int64_t N_BLOCK = 64;
+  const int64_t K_BLOCK = 64;
 
-      C_tensor[n][m] = sum;
+#pragma omp parallel for collapse(2)
+  for (int64_t n_block = 0; n_block < N; n_block += N_BLOCK) {
+    for (int64_t m_block = 0; m_block < M; m_block += M_BLOCK) {
+      for (int64_t n = n_block; n < std::min(n_block + N_BLOCK, N); ++n) {
+        for (int64_t m = m_block; m < std::min(m_block + M_BLOCK, M); ++m) {
+          float sum = 0.0f;
+          __m256 sum_vec = _mm256_setzero_ps();
+
+          for (int64_t k_block = 0; k_block < K; k_block += K_BLOCK) {
+            int64_t k = k_block;
+            int64_t k_end = std::min(k_block + K_BLOCK, K); // 计算当前 K 块的结束位置
+
+            for (; k <= k_end - 8; k += 8) {
+              __m256 a_vec = _mm256_load_ps(&A_tensor[m][k]);
+              __m256 b_vec = _mm256_load_ps(&B_tensor[n][k]);
+              sum_vec = _mm256_add_ps(sum_vec, _mm256_mul_ps(a_vec, b_vec));
+            }
+            for (; k < k_end; ++k) {
+              sum += A_tensor[m][k] * B_tensor[n][k];
+            }
+          }
+
+          __m128 sum_128 = _mm_add_ps(_mm256_extractf128_ps(sum_vec, 0), _mm256_extractf128_ps(sum_vec, 1));
+          sum_128 = _mm_hadd_ps(sum_128, sum_128);
+          sum_128 = _mm_hadd_ps(sum_128, sum_128);
+          sum += _mm_cvtss_f32(sum_128);
+          C_tensor[n][m] = sum;
+        }
+      }
     }
   }
 }
@@ -449,7 +461,7 @@ void winograd_convolution(
       U_tensor_t U_tensor = (U_tensor_t)U;
       V_tensor_t V_tensor = (V_tensor_t)V;
       M_tensor_t M_tensor = (M_tensor_t)M;
-      sgemm_avx2(vs.num_tiles,
+      sgemm_avx2_tiled(vs.num_tiles,
             us.oc,
             us.ic,
             (float *)(V_tensor[h][w]),
